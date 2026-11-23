@@ -1256,14 +1256,7 @@ def gen(m, had, quiet=None, dof=None):
     for key, sw in keymap:
         out.append("\tIf KeyCode = %s Then Controller.Switch(%d) = True" % (key, sw))
     if cab.get("coin"):
-        if (m.get("platform") or "spike2") != "spike2":
-            # PulseSw is one timer tick, which the Spike 1 node bus's polls miss
-            # (Ghostbusters: CREDITS 0 after three); 600 ms counted on the rig.
-            # The Spooky board takes the table's switches from a file it polls
-            # (PAD-952): the same long press
-            out.append("\tIf KeyCode = AddCreditKey Then vpmTimer.PulseSwitch %d, 600, 0" % cab["coin"])
-        else:
-            out.append("\tIf KeyCode = AddCreditKey Then vpmTimer.PulseSw %d" % cab["coin"])
+        out.append("\tIf KeyCode = AddCreditKey Then vpmTimer.PulseSw %d" % cab["coin"])
     if skip:
         out.append("\tSelect Case KeyCode")
         out.append("\t\tCase %s" % ", ".join(skip))

@@ -138,27 +138,6 @@
  *                            PNG, a video a .padv (video.h) or a GIF, a sound
  *                            a WAV; test= puts a .png under IMAGES, a .gif or
  *                            .padv under VIDEOS and a .wav under SOUNDS
- *   key_left=<byte>.<bit>    JJP only (--input jjpio): where the LEFT flipper
- *   key_right=<byte>.<bit>   / RIGHT flipper / START / Volume+ / Volume- sit
- *   key_start=<byte>.<bit>   in the I/O board's 64-byte frame, active low.
- *   key_plus=<byte>.<bit>    Absent = the places JJP's own installer reads
- *   key_minus=<byte>.<bit>   (1.0, 1.2, 3.0) and the device table's volume
- *                            pair (1.5, 1.6); a value that is not
- *                            <0-63>.<0-7> is warned about and ignored.  A
- *                            comma and a second <byte>.<bit> is the same
- *                            button in a second place - the GNR's lockdown-
- *                            bar Action button beside START is
- *                            key_start=3.0,3.4 (David, 2026-09-14).  A Stern
- *                            card ignores them.
- *   switch_left=<n>[,<n2>]   Barrels of Fun only (--input fast, PAD-342): the
- *   switch_right=<n>[,<n2>]  LEFT flipper / RIGHT flipper / START as switch
- *   switch_start=<n>[,<n2>]  numbers in the FAST Neuron's SA: reply, and after
- *                            a comma a second switch that does the same
- *                            (Labyrinth's LAUNCH button beside START:
- *                            switch_start=14,20).  Absent = Labyrinth's 15,
- *                            22, 14; a value that is not 0-255 is warned
- *                            about and ignored.
- *
  * A GROUP IS NEVER FATAL.  A member index naming no image line is dropped, a
  * group left with no member is dropped, an image named by two groups belongs
  * to the first, and image 0 is a member only in a KEEPING group - in a
@@ -350,9 +329,6 @@ struct conf {
     unsigned color[TH_N];          /* color_<role>= overrides... */
     unsigned char color_set[TH_N]; /* ...and which roles the conf set */
     int bad_colors;    /* color_ keys with an unknown role or a value that is not RRGGBB: ignored, counted */
-    int jjp_byte[5], jjp_bit[5];   /* key_left/right/start/plus/minus= (byte -1 when absent) */
-    int jjp_byte2[5], jjp_bit2[5]; /* ...and the second position after the comma (byte -1 = none) */
-    int fast_sw[3], fast_sw2[3];   /* switch_left/right/start= (-1 when absent), and the second switch */
 };
 
 /* 0 ok (c->n >= 1), -1 error with a message in err. */
@@ -400,15 +376,5 @@ int conf_card_roll(const struct conf *c, int k);
 
 /* The choice file: "<index>\n", written atomically (tmp + rename). 0 ok. */
 int conf_write_choice(const char *path, int idx);
-
-/* THE LEVEL THE FRONT VOLUME BUTTONS SET (JJP, item 120): one line
- * "<0-100>\n" on perm beside the last-choice file, then "conf <0-100>\n":
- * the card's own level it was set against (PAD-216), written atomically.
- * Read: the level, or -1 when the path is empty, the file is missing or it
- * holds anything but a number 0-100; *base gets the second line's level, or
- * -1 when there is none (a file an older build wrote).  Write: 0 ok, -1
- * with errno. */
-int conf_read_volume(const char *path, int *base);
-int conf_write_volume(const char *path, int volume, int base);
 
 #endif

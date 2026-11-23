@@ -1141,7 +1141,6 @@ void settings_run(struct settings_env *e)
         long long now = sel_now_ms();
         int dirty = 0;
         while ((ev = input_poll(e->in, now)) != EV_NONE) {
-            if (ev >= EV_RAW_BASE) continue;
             sel_say("key: %s", input_event_name(ev));
             if (ev == EV_BACK) continue;        /* ignored, as in the menu */
             key(&st, ev, now);

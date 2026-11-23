@@ -39,7 +39,7 @@ import sys
 import time
 
 RIG = os.path.dirname(os.path.abspath(__file__))
-# installed: {app}/tools/spike2_emu next to {app}/pinball_decryptor; in the repo the same
+# installed: {app}/tools/spike2_emu next to {app}/spike2_vpx; in the repo the same
 sys.path.insert(0, os.path.dirname(os.path.dirname(RIG)))
 
 # a switch that takes a mech out: a motor, a diverter, a magnet, a gate
@@ -183,7 +183,7 @@ def launch_setting(elf):
 
 
 def _read(elf):
-    from pinball_decryptor.plugins.stern import adjustments
+    from spike2_vpx import adjustments
     try:
         import numpy  # noqa: F401
     except ImportError:

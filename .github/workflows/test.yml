@@ -1,155 +1,17 @@
-name: Tests
+name: SPIKE 2 VPX tests
 
-# Runs the test suite on push to main and every pull request, on Linux
-# and macOS.  Per-platform setup installs whatever extra tooling those
-# tests need (gpg).
-#
-# THERE IS NO GUI LANE.  The Tk UI and its tests were removed at the web
-# UI cut-over; the web UI's own tests are in-process (no browser, no
-# display) and run with everything else, about 15 seconds of them.
-# Browser captures, frozen apps and native windows are the manual
-# webui-builds workflow, which gates nothing (David, 2026-09-23: "no
-# expensive heavy testing slowing down ci").
-#
-# THERE IS NO WINDOWS LEG, by decision (David, 2026-09-13).  The release
-# flow's ship gate is the full suite green on the developer's own Windows
-# box - the same OS and the same Tk build - so a Windows CI run repeated
-# that check on the one runner this account queues longest for, and its
-# serial Tk lane was the whole job: 375s of a 6-7 minute test step while
-# the other three workers idled.  Over the 60 runs before the leg was
-# removed it caught ZERO product regressions.  Every one of its reds was an
-# xdist worker crashing inside a Tk test (five runs), one test's argv being
-# too long for Windows (three), or a test that was wrong on every OS; three
-# of those reds yanked a release.  The two remaining legs are where a test
-# written on Windows meets other path rules, fonts and probes, which is the
-# failure class that has actually surfaced here.  Do not add the leg back
-# for a flake or a timing worry; add it back only for a Windows-only
-# product bug that the local gate demonstrably could not have caught.
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch: {}
+on: [push, pull_request]
 
 permissions:
   contents: read
 
-# Only PRs cancel, and only PRs share a group: a new push to a branch
-# cancels that branch's older run.  A push to main keys its group on the
-# SHA instead, so main's runs neither cancel nor QUEUE BEHIND one another --
-# a shared non-cancelling group serializes the runs in it and lets a third
-# one evict the pending second, which would delay and then silently drop
-# exactly the run /release watches as its post-tag yank tripwire.  A
-# tripwire that reports "cancelled" because a later merge landed is a
-# tripwire that tells us nothing.
-concurrency:
-  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   test:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    # A wedged or looping test should fail the job, not hang for the
-    # 6-hour default and hold up a release.  Healthy runs take about 10
-    # minutes on Linux and 11-15 on macOS, whose slower runners passed the
-    # old 15-minute cap at 98% with nothing failing (PAD-550).  By
-    # 2026-11 the macOS test step alone took 18-25 minutes, and a slow
-    # runner passed the 30-minute cap at 98% the same way (PAD-1368).
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: 'pip'
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # pytest-xdist: the suite runs one worker per core (-n auto).
-          # pytest-rerunfailures: a test that fails is run again (twice), so
-          # a flake that passes on a retry never turns the run red and
-          # never yanks a release (David, 2026-09-23).  The retried tests
-          # are listed by the "Flaky tests" step below: delete them.
-          # pyyaml: the P-ROC and American Pinball rigs read their machine
-          # yaml (tools/proc_emu, tools/ap_emu), and their tests with them.
-          pip install pytest pytest-xdist pytest-rerunfailures pycryptodome pyyaml olefile
-          # Pillow is in requirements.txt — Williams' DMD render
-          # path (dmd_render.py, capture_pipeline.py) imports it at
-          # module load, so missing it causes the Williams plugin
-          # to silently fail to load and disappear from the
-          # manufacturer registry.  Installing requirements.txt
-          # picks that up.
-          pip install -r requirements.txt
-
-      # gpg is needed for the BOF .fun round-trip + Spooky's GPG-symmetric
-      # flows, where the app calls a host-side gpg directly.
-      - name: Install gpg (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y gnupg
-
-      - name: Install gpg (macOS)
-        if: runner.os == 'macOS'
-        run: brew install gnupg
-
-      # e2fsprogs: the CGC Extract/Write round trip on a built installer
-      # (tests/test_cgc_mac_portable.py) - the Mac's own dd/wc/find with the
-      # e2fsprogs the macOS app ships, built by the same script the DMG build
-      # runs and found through PAD_E2FSPROGS_DIR, with no Homebrew copy: a
-      # user's Mac has none (PAD-571, PAD-573).
-      - name: Build the app's own e2fsprogs (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          bash installer/build_mac_e2fsprogs.sh "$RUNNER_TEMP/e2fsprogs"
-          echo "PAD_E2FSPROGS_DIR=$RUNNER_TEMP/e2fsprogs" >> "$GITHUB_ENV"
-
-      - name: Run tests (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: python -m pytest tests -n auto --dist loadgroup -v --reruns 2 --reruns-delay 1 -r fER | tee pytest.log
-
-      # The multi-boot card builder's own end-to-end test (item 93): real ext4
-      # through debugfs/mke2fs/e2fsck, and - as root, which the hosted runner
-      # grants with a passwordless sudo - the loop-mounted in-place update,
-      # its crash drill included.  The only automated run of that path.
-      - name: Multi-boot card selftest (Linux, root)
-        if: runner.os == 'Linux'
-        run: sudo -E env PATH="$PATH" python -m pip install -q pycryptodome && sudo -E env PATH="$PATH" python tools/spike2_emu/mkmulticard.py selftest /tmp/mkmulticard-selftest
-
-      - name: Run tests (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: python -m pytest tests -n auto --dist loadgroup -v --reruns 2 --reruns-delay 1 -r fER | tee pytest.log
-
-      # Every test that failed and then passed on a retry is a FLAKE: it can
-      # pass or fail on the same code, so it finds no regressions and only
-      # costs releases.  Listed on the run (annotations + summary) so the next
-      # session deletes it (memory: feedback_delete_flaky_tests).  A test that
-      # was retried and still FAILED is not one: it is a real break, red on
-      # every run, and calling it flaky hid seven of them for 30 runs (PAD-340).
-      - name: Flaky tests
-        if: always()
-        shell: bash
-        run: |
-          [ -f pytest.log ] || exit 0
-          grep -oE 'RERUN +tests/[^ ]+|tests/[^ ]+ RERUN' pytest.log \
-            | grep -oE 'tests/[^ ]+' | sort -u > rerun.txt || true
-          grep -oE '(FAILED|ERROR) +tests/[^ ]+' pytest.log \
-            | grep -oE 'tests/[^ ]+' | sort -u > failed.txt || true
-          comm -23 rerun.txt failed.txt > flaky.txt
-          if [ -s flaky.txt ]; then
-            echo "### Flaky tests on ${{ matrix.os }} (passed on a retry: delete them)" >> "$GITHUB_STEP_SUMMARY"
-            while read -r t; do
-              echo "- \`$t\`" >> "$GITHUB_STEP_SUMMARY"
-              echo "::warning title=Flaky test::$t failed and then passed on a retry; delete it"
-            done < flaky.txt
-          fi
+          python-version: "3.13"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q

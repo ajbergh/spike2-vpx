@@ -87,28 +87,7 @@
 #ifndef DEF_VOLUME
 #define DEF_VOLUME   50
 #endif
-/* THE MENU'S VOLUME CEILING AND ITS MEMORY (item 120).  Nothing - volume=,
- * --volume, the remembered level, the machine's own setting - takes the menu
- * above VOLUME_CEILING, and a conf's volume_max= can only lower it.  The JJP
- * build sets 40 (Makefile): a JJP machine runs its amplifiers at full while
- * the menu plays, so the menu's gain is all that stands between a music bed
- * and the speakers.  DEF_VOLFILE is where the level the front Volume+/-
- * buttons set is kept; empty (the Stern build) = not kept. */
-#ifndef VOLUME_CEILING
 #define VOLUME_CEILING 100
-#endif
-#ifndef DEF_VOLFILE
-#define DEF_VOLFILE  ""
-#endif
-#ifndef VOL_STEP
-#define VOL_STEP     5              /* one Volume+/- press (the JJP build: 10 of its 0-100) */
-#endif
-#define VOL_OSD_MS   2000           /* the indicator stays this long after the last press */
-/* The indicator is up ONLY after a press.  v1.16.0 (PAD-219) opened every JJP
- * menu with it up for 3 s, to put the level on the glass while cooltoy's
- * Sonic was "at max" whatever the card said; once the scale itself was found
- * to be the cause David had it taken out again (Discord, 2026-09-26: "do we
- * really need the volume popup to come up every time the game starts?"). */
 #define HEADLESS_W   1360
 #define HEADLESS_H   768
 #define MAX_VISIBLE  4              /* cards in a row; more = carousel */
@@ -166,7 +145,7 @@
 struct opts {
     const char *conf, *out, *input, *nodebus, *spi, *padsw, *tables, *last, *log,
                *headless, *font, *preamble, *media, *audio, *audio_fmt, *audio_dump,
-               *snapshot, *codec, *jjpio, *volume_file, *fast;
+               *snapshot, *codec;
     /* PAD-307: the values file, and the boot hook's apply step:
      * --apply-color --image N --program PATH --to OUT */
     const char *colour_file, *apply_program, *apply_to;
@@ -179,7 +158,6 @@ struct opts {
      * a settings screen instead of the menu (tests, the preview, screenshots) */
     const char *screen;
     int screen_row, screen_edit;
-    int learn;        /* --input jjpio: log the cabinet bytes whenever they change */
     int timeout;      /* -1 = from conf */
     int def;          /* -1 = from conf */
     int invert;       /* -1 = auto */
@@ -219,16 +197,9 @@ static void usage(FILE *f)
         "codeselect " VERSION " - Spike 2 boot-time code selector\n"
         "  --conf PATH        images.conf (default " DEF_CONF ")\n"
         "  --out PATH         choice file, one line '<index>' (default " DEF_OUT ")\n"
-        "  --input hw|padsw|jjpio|fast|pipe|none   button source (default hw; jjpio = a JJP machine's I/O\n"
-        "                     board; fast = a Barrels of Fun machine's FAST Neuron; pipe =\n"
-        "                     \"sw L|R|S 1|0\" lines on stdin, a Dutch Pinball machine's dpprocsw)\n"
+        "  --input hw|padsw|pipe|none   button source (default hw)\n"
         "  --nodebus DEV      node bus tty (default /dev/ttymxc1)\n"
         "  --spi DEV          cabinet spidev, 'none' disables (default /dev/spidev1.0)\n"
-        "  --jjpio DEV        jjpio: the I/O board node (default /dev/jjpio100, then /dev/jjpio0)\n"
-        "  --fast DEV         fast: the Neuron's NET port (default: ask every /dev/ttyACM* but the\n"
-        "                     Audio Controller ID: and take the one answering ID:NET)\n"
-        "  --learn            jjpio: log the four cabinet bytes whenever they change (calibration);\n"
-        "                     fast: log every switch that changes\n"
         "  --padsw PATH       rig keyboard file (default $PAD_SW_SHM or /dump/padsw)\n"
         "  --tables PATH      switch_list.txt (default /dump/tables/$PAD_GAME/switch_list.txt)\n"
         "  --timeout SEC      countdown, 0 = wait for ever (overrides conf)\n"
@@ -259,8 +230,6 @@ static void usage(FILE *f)
         "  --codec auto|off   auto = power the machine's codecs' line-out over i2c the way the game\n"
         "                     does, put back at exit (only when both SGTL5000s answer); off = leave them\n"
         "  --volume 0-100     software mix gain (overrides conf volume=, default %d)\n"
-        "  --volume-file PATH jjpio: where the level the machine's Volume+/- buttons set is kept\n"
-        "                     (default '" DEF_VOLFILE "'; '' = not kept); nothing passes %d\n"
         "  --anim-frame N     hold every animation at frame N instead of playing them (headless tests);\n"
         "                     with --snapshot: the highlighted card's frame (wraps), and the\n"
         "                     first of the --frames K run\n"
@@ -275,8 +244,7 @@ static void usage(FILE *f)
         "                     table of the store DIR (/data/nv/<title>) to FILE; --scores-load\n"
         "                     --from FILE --store DIR puts FILE's table into DIR as a new LKRAM\n"
         "                     generation; both: exit 0 = done, 1 = nothing to do, 2 = refused\n"
-        "exit status: 0 = a choice was written, 2 = no choice\n", ANIM_MAX_FRAMES, DEF_VOLUME,
-        VOLUME_CEILING);
+        "exit status: 0 = a choice was written, 2 = no choice\n", ANIM_MAX_FRAMES, DEF_VOLUME);
 }
 
 /* With --frames K > 1 the --snapshot value is a printf PATTERN, so the caller
@@ -365,9 +333,6 @@ static int parse_args(struct opts *o, int argc, char **argv)
         ARG("--audio-fmt", audio_fmt)
         ARG("--audio-dump", audio_dump)
         ARG("--codec", codec)
-        ARG("--jjpio", jjpio)
-        ARG("--fast", fast)
-        ARG("--volume-file", volume_file)
         ARG("--color-file", colour_file)
         ARG("--program", apply_program)
         ARG("--to", apply_to)
@@ -375,7 +340,6 @@ static int parse_args(struct opts *o, int argc, char **argv)
         ARG("--from", scores_from)
         ARG("--screen", screen)
 #undef ARG
-        if (!strcmp(a, "--learn")) { o->learn = 1; continue; }
         if (!strcmp(a, "--apply-color")) { o->apply_colour = 1; continue; }
         if (!strcmp(a, "--scores-save")) { o->scores_op = 1; continue; }
         if (!strcmp(a, "--scores-load")) { o->scores_op = 2; continue; }
@@ -403,9 +367,9 @@ missing:
         fprintf(stderr, "codeselect: %s needs a value\n", a);
         return -1;
     }
-    if (strcmp(o->input, "hw") && strcmp(o->input, "padsw") && strcmp(o->input, "jjpio")
-        && strcmp(o->input, "fast") && strcmp(o->input, "pipe") && strcmp(o->input, "none")) {
-        fprintf(stderr, "codeselect: --input must be hw, padsw, jjpio, fast, pipe or none\n");
+    if (strcmp(o->input, "hw") && strcmp(o->input, "padsw")
+        && strcmp(o->input, "pipe") && strcmp(o->input, "none")) {
+        fprintf(stderr, "codeselect: --input must be hw, padsw, pipe or none\n");
         return -1;
     }
     if (strcmp(o->codec, "auto") && strcmp(o->codec, "off")) {
@@ -1445,56 +1409,6 @@ static void draw_menu(struct gfx *g, struct gfx_font *f, const struct layout *L,
     }
 }
 
-/* THE VOLUME INDICATOR (item 120): a panel over the middle of the card row
- * with the level in words and as a bar of VOL_STEP segments.  Drawn at 0 too:
- * the point is to show the operator the button worked when the speakers say
- * nothing (David, 2026-09-14: "show feedback on the screen that the volume
- * switches are reacting"). */
-static void draw_volume(struct gfx *g, struct gfx_font *f, const struct layout *L,
-                        int level, int cap)
-{
-    float s = L->s;
-    int bw = (int)(600 * s), bh = (int)(150 * s);
-    int x = (g->w - bw) / 2, y = L->top + (L->ch - bh) / 2;
-    int nseg = cap > 0 ? (cap + VOL_STEP - 1) / VOL_STEP : 1;
-    int lit = (level + VOL_STEP - 1) / VOL_STEP;
-    int pad = (int)(28 * s), gap = (int)(6 * s);
-    int sx = x + pad, sw = bw - 2 * pad, sy = y + (int)(88 * s), sh = (int)(36 * s);
-    int k, segw;
-    char buf[64];
-
-    if (lit > nseg) lit = nseg;
-    gfx_round_frame(g, x, y, bw, bh, (int)(20 * s), (int)(4 * s), TH(L, FRAME_HL), TH(L, CARD_HL));
-    if (level > 0) snprintf(buf, sizeof buf, "VOLUME  %d / %d", level, cap);
-    else snprintf(buf, sizeof buf, "VOLUME  OFF");
-    gfx_text_center(g, f, 44 * s, g->w / 2, y + (int)(64 * s), buf, TH(L, TITLE_HL));
-    segw = (sw - (nseg - 1) * gap) / nseg;
-    for (k = 0; k < nseg; k++)
-        gfx_rect(g, sx + k * (segw + gap), sy, segw, sh, k < lit ? TH(L, TITLE_HL) : TH(L, FRAME));
-}
-
-/* one Volume+/- press: to the next multiple of VOL_STEP that way, so a level
- * the conf left between two (17) lands on the ladder (20 up, 15 down) */
-static int volume_step(int v, int dir, int cap)
-{
-    if (dir > 0) v = (v / VOL_STEP + 1) * VOL_STEP;
-    else v = v > 0 ? (v - 1) / VOL_STEP * VOL_STEP : 0;
-    return v > cap ? cap : v < 0 ? 0 : v;
-}
-
-/* the level on perm, once it has settled - never per press, and never when
- * nothing about it changed */
-static void remember_volume(const char *path, int v, int base, int *saved)
-{
-    if (!path || !*path || v == *saved) return;
-    if (conf_write_volume(path, v, base) == 0) {
-        sel_log("volume: %d remembered in %s", v, path);
-        *saved = v;
-    } else {
-        sel_log("volume: cannot write %s: %s (the level is not kept)", path, strerror(errno));
-    }
-}
-
 /* WHAT THE LOADING FRAME SHOWS: the BUILD's own picture when the card knows
  * what that build looks like, else the card's.
  *
@@ -1862,9 +1776,8 @@ int main(int argc, char **argv)
     int machine_v = -1;       /* volume=machine: the machine's own 0-63, else -1 */
     /* item 120: whether PLUS/MINUS are this cabinet's volume buttons (jjpio),
      * the ceiling, the level on perm (-1 = none), and whether a press moved it */
-    int vol_keys, vol_cap, vol_saved = -1, vol_touched = 0, vol_base = -1, vol_conf;
-    const char *vol_how = "default", *vol_file;
-    long long osd_until = 0;  /* the volume indicator is up until then; 0 = not up */
+    int vol_cap;
+    const char *vol_how = "default";
     int stall_ms = getenv("PADSELECT_STALL_MS") ? atoi(getenv("PADSELECT_STALL_MS")) : 0;
     int audio_up = 0;         /* the bridge brought the audio section up (hw only) */
     int action;                       /* this title has a lockdown-bar ACTION button */
@@ -1934,34 +1847,9 @@ int main(int argc, char **argv)
         return rc;
     }
     timeout = o.timeout >= 0 ? o.timeout : c.timeout >= 0 ? c.timeout : DEF_TIMEOUT;
-    /* THE MENU'S VOLUME, most specific first: --volume, then the level the
-     * machine's own Volume+/- buttons last set (jjpio is the only backend with
-     * such buttons), then the conf's volume=, then the build's default - and
-     * never above the ceiling (applied below, once volume=machine has had its
-     * say) */
-    vol_keys = !strcmp(o.input, "jjpio");
-    vol_file = o.volume_file ? o.volume_file : DEF_VOLFILE;
     vol_cap = VOLUME_CEILING;
     if (c.volume_max >= 0 && c.volume_max < vol_cap) vol_cap = c.volume_max;
-    vol_saved = vol_keys && !o.snapshot ? conf_read_volume(vol_file, &vol_base) : -1;
-    /* A REMEMBERED LEVEL BELONGS TO THE CARD IT WAS SET UNDER (PAD-216): JJP's
-     * installer keeps perm on a same-game reinstall, so a rebuilt card with a
-     * new volume= found the old card's level (up to the cap) and played at
-     * it - a lowered volume= did nothing.  The file names the conf level it
-     * was set against; a different one, or none (an older build's file), and
-     * the card's own volume= wins until the buttons are pressed again. */
-    vol_conf = c.volume >= 0 ? c.volume : DEF_VOLUME;
-    if (vol_saved >= 0 && vol_base != vol_conf) {
-        if (vol_base >= 0)
-            sel_log("volume: remembered %d was set under volume=%d; this card says %d, so the card's level is used",
-                    vol_saved, vol_base, vol_conf);
-        else
-            sel_log("volume: remembered %d in %s names no card level (an older menu wrote it); "
-                    "the card's level is used", vol_saved, vol_file);
-        vol_saved = -1;
-    }
     if (o.volume >= 0) { volume = o.volume; vol_how = "--volume"; }
-    else if (vol_saved >= 0) { volume = vol_saved; vol_how = "remembered"; }
     else if (c.volume >= 0) { volume = c.volume; vol_how = "conf volume="; }
     else volume = DEF_VOLUME;
     snapshot = o.snapshot != NULL;
@@ -2176,12 +2064,7 @@ int main(int argc, char **argv)
         sel_log("volume: %d (%s) is above the ceiling, %d is used", volume, vol_how, vol_cap);
         volume = vol_cap;
     }
-    if (vol_keys)
-        sel_log("volume: %d of %d (%s%s%s); Volume+/- step it by %d, %s%s", volume, vol_cap, vol_how,
-                *vol_how == 'r' ? " in " : "", *vol_how == 'r' ? vol_file : "", VOL_STEP,
-                *vol_file ? "kept in " : "not kept", vol_file);
-    else
-        sel_log("volume: %d of %d (%s)", volume, vol_cap, vol_how);
+    sel_log("volume: %d of %d (%s)", volume, vol_cap, vol_how);
     /* THE INPUT FIRST - the node bus is also the way to the CPU board's bridge
      * MCU, which the audio section below is brought up through */
     memset(&icfg, 0, sizeof icfg);
@@ -2192,36 +2075,8 @@ int main(int argc, char **argv)
     else snprintf(padsw, sizeof padsw, "%s", getenv("PAD_SW_SHM") ? getenv("PAD_SW_SHM") : "/dump/padsw");
     icfg.padsw = padsw;
     icfg.tables = tables;
-    /* jjpio: the node, the five cabinet buttons' places in the frame (the
-     * conf's key_*=, or the defaults), and whether to log the bytes.  ALL
-     * FIVE: icfg is zeroed above, and a zero is a valid place (byte 0 bit 0),
-     * so a button left out of this copy is silently moved rather than
-     * defaulted - the first build of item 120 read Volume+/- off byte 0. */
-    icfg.jjpio = o.jjpio;
-    icfg.jjp_learn = o.learn;
-    {
-        int k;
-        for (k = 0; k < (int)(sizeof icfg.jjp_byte / sizeof *icfg.jjp_byte); k++) {
-            icfg.jjp_byte[k] = c.jjp_byte[k];
-            icfg.jjp_bit[k] = c.jjp_bit[k];
-            icfg.jjp_byte2[k] = c.jjp_byte2[k];
-            icfg.jjp_bit2[k] = c.jjp_bit2[k];
-        }
-    }
-    /* fast (PAD-342): the NET port, and LEFT / RIGHT / START as switch
-     * numbers (the conf's switch_*=, else the backend's Labyrinth defaults) */
-    icfg.fast = o.fast;
-    {
-        int k;
-        for (k = 0; k < 3; k++) {
-            icfg.fast_sw[k] = c.fast_sw[k];
-            icfg.fast_sw2[k] = c.fast_sw2[k];
-        }
-    }
     if (!strcmp(o.input, "hw")) in = input_hw_open(&icfg);
     else if (!strcmp(o.input, "padsw")) in = input_padsw_open(&icfg);
-    else if (!strcmp(o.input, "jjpio")) in = input_jjpio_open(&icfg);
-    else if (!strcmp(o.input, "fast")) in = input_fast_open(&icfg);
     else if (!strcmp(o.input, "pipe")) in = input_pipe_open(&icfg);
 
     /* THE AUDIO SECTION, in the game's order (0x1fa9c8 then 0x1fb2a8): the
@@ -2365,34 +2220,7 @@ int main(int argc, char **argv)
         int ev, remain, old_hl = hl;
 
         while ((ev = input_poll(in, now)) != EV_NONE) {
-            if (ev >= EV_RAW_BASE) {
-                /* --learn (jjpio): a frame bit that is not a menu button moved.
-                 * To the log, so a machine's own buttons can be read off it - the
-                 * GNR's headphone-kit rocker and its Action button were found this
-                 * way (2026-09-14).  It was on the glass for 3 s as well until David
-                 * asked for that line to go, the same evening. */
-                int code = ev - EV_RAW_BASE, bitno = code >> 1;
-                sel_say("learn: INPUT byte %d bit %d %s (not a menu button)",
-                        bitno / 8, bitno % 8, (code & 1) ? "pressed" : "released");
-                continue;
-            }
             sel_say("key: %s", input_event_name(ev));
-            /* A JJP CABINET'S PLUS AND MINUS ARE ITS VOLUME BUTTONS (item 120):
-             * they step the menu's own level, play the move sound at the new
-             * one and put the indicator up.  Everywhere else they are what they
-             * always were - Stern's service Plus/Minus move the highlight. */
-            if (vol_keys && (ev == EV_PLUS || ev == EV_MINUS)) {
-                int was = volume;
-                volume = volume_step(volume, ev == EV_PLUS ? 1 : -1, vol_cap);
-                sel_say("volume: %d -> %d (of %d)%s", was, volume, vol_cap,
-                        volume != was ? "" : ev == EV_PLUS ? ", at the top" : ", at the bottom");
-                audio_set_volume(au, volume);
-                audio_play(au, media.move, 0);
-                osd_until = now + VOL_OSD_MS;
-                vol_touched = 1;
-                last_key = now;             /* the countdown restarts, as for any key */
-                continue;
-            }
             switch (ev) {
             /* THE MOVE SOUND NEVER PLAYS OVER ITSELF (PAD-141).  audio_play
              * takes a free voice and MIXES, so a clip longer than a click
@@ -2546,20 +2374,6 @@ int main(int argc, char **argv)
                       remain, action, audio_missing(au));
             dirty = 0;
         }
-        /* THE VOLUME INDICATOR, on top of whatever was just painted - an
-         * animation repaints its panel under it every frame - until VOL_OSD_MS
-         * after the last press; then one whole repaint takes it away and the
-         * settled level goes to perm */
-        if (osd_until && now >= osd_until) {
-            osd_until = 0;
-            draw_menu(&g, font, &L, &c, &media, hl, conf_card_is_settings(&c, hl) ? home : hl,
-                      remain, action, audio_missing(au));
-            sel_log("volume: indicator off at %d", volume);
-            /* a level no button moved is never written to perm (PAD-219) */
-            if (vol_touched) remember_volume(vol_file, volume, vol_conf, &vol_saved);
-        } else if (osd_until) {
-            draw_volume(&g, font, &L, volume, vol_cap);
-        }
         present(&g, &egl, headless, invert);
         /* PADSELECT_STALL_MS: the rig's knob - every pass sleeps this long, the
          * way a vsync-paced loop with slow frames would, so the pump thread's
@@ -2587,8 +2401,6 @@ int main(int argc, char **argv)
         }
     }
 
-    /* a level the buttons changed in the last moments before START is kept too */
-    if (vol_touched) remember_volume(vol_file, volume, vol_conf, &vol_saved);
 testcard_done:
 
     if (chosen >= 0) {

@@ -458,6 +458,9 @@ def test_padspike2_hands_b2s_to_the_controller(tmp_path, pre, want):
                               % str(tmp_path / "sys.vbs"), pre, "PadStartB2S", "PadStopB2S"]), encoding="latin-1")
     env = dict(os.environ, TEMP=str(tmp_path), TMP=str(tmp_path))
     r = subprocess.run(["cscript", "//nologo", str(vbs)], capture_output=True, text=True, timeout=60, env=env)
+    if "Loading your settings failed. (Access is denied." in r.stdout + r.stderr:
+        pytest.skip("Windows Script Host is blocked in this session")
+    assert r.returncode == 0, r.stdout + r.stderr
     assert not r.stderr.strip(), r.stdout + r.stderr
     assert r.stdout.split() == want
 

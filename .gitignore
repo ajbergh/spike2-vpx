@@ -1,45 +1,6 @@
 __pycache__/
-*.pyc
-*.pyo
-*.egg-info/
+*.py[cod]
+.pytest_cache/
 .venv/
-.idea/
-.vscode/
-build/
-dist/
-*.spec
-images/
-
-# Installer build artifacts
 installer/build/
 installer/Output/
-installer/get-pip.py
-installer/python-embed.zip
-
-# Local planning scratch (not part of the shipped app)
-# `plans/*` rather than `plans/`, because git never descends into an excluded
-# DIRECTORY and the negation below would silently do nothing.
-plans/*
-# ...except the task queue. It is what /next reads and it is the thread of the
-# work itself, so it should survive a clone and carry its own history.
-!plans/TODO.md
-
-# Claude Code runtime state - except the project settings every session in
-# every checkout must share: the hook that keeps work on tickets
-# (scripts/hooks/require_ticket.py). The directory itself cannot be ignored
-# for a file inside it to be re-included, hence .claude/* not .claude/.
-.claude/*
-!.claude/settings.json
-
-# The preview-code SIGNING KEY (tools/preview_code.py) lives outside every checkout;
-# these patterns are the second line of defence if a copy is ever dropped in one.
-*preview_signing_key*
-pinball_decryptor_signing/
-installer/vpx_tables/
-
-# Spike 3 decryption keys NEVER belong in the repo (keep the "how" private).
-# A user points PAD at these; they are theirs, not shipped.
-*.padkeys.json
-*screen_timing*
-spike3_keyfile*
-*.spike3.key

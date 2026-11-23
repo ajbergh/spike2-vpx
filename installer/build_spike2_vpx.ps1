@@ -26,15 +26,14 @@ $lib = Join-Path $pythonDir "Lib"
 New-Item -ItemType Directory -Path $lib | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $base "Lib") -Exclude site-packages, __pycache__ |
     Copy-Item -Destination $lib -Recurse
-$pins = Get-Content (Join-Path $project "requirements-windows.txt") |
-    Where-Object { $_ -match '^(pywin32|olefile|sounddevice)==' }
+$requirements = Join-Path $project "requirements-windows.txt"
 $site = Join-Path $lib "site-packages"
-& $Python -I -m pip install --only-binary=:all: --target $site @pins
+& $Python -I -m pip install --only-binary=:all: --target $site -r $requirements
 if ($LASTEXITCODE -ne 0) { throw "SPIKE 2 Python dependencies could not be staged." }
 
 $pth = Join-Path $pythonDir ("python" + $version.Replace(".", "") + "._pth")
 @(".", "DLLs", "Lib", "Lib\site-packages", "..", "import site") | Set-Content -LiteralPath $pth -Encoding ASCII
-& (Join-Path $pythonDir "python.exe") -c "import pythoncom,win32com.client,olefile,sounddevice,tkinter; tkinter.Tcl().eval('info patchlevel')"
+& (Join-Path $pythonDir "python.exe") -c "import pythoncom,win32com.client,olefile,sounddevice,tkinter; from Crypto.Hash import MD2; MD2.new(); tkinter.Tcl().eval('info patchlevel')"
 if ($LASTEXITCODE -ne 0) { throw "The standalone Python bundle failed its import check." }
 
 & $InnoSetupPath "/DProjectDir=$project" "/DPythonDir=$pythonDir" "/DAppVersion=$AppVersion" (Join-Path $PSScriptRoot "spike2_vpx.iss")

@@ -1,14 +1,1 @@
-# Test + development dependencies.  The app itself only needs Pillow
-# (see requirements.txt), but the test suite needs pytest + pycryptodome
-# (for the Spooky AES round-trip fixtures).
-#
-# Install with:  pip install -r requirements-dev.txt
--r requirements.txt
 pytest>=8
-# pytest.ini runs the suite parallel by default (-n auto --dist loadgroup);
-# without xdist installed that addopts line is an unrecognized-argument error.
-pytest-xdist>=3
-pycryptodome>=3
-# olefile reads a Visual Pinball table (tools/spike2_emu/vpx, PAD-775);
-# without it the bridge tests skip.
-olefile>=0.46

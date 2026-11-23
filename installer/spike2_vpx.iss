@@ -21,8 +21,7 @@ Source: "{#ProjectDir}\Play-Spike2Vpx.ps1"; DestDir: "{app}"; Flags: ignoreversi
 Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\installer\setup_spike2_wsl.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "{#PythonDir}\*"; DestDir: "{app}\python"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
-Source: "{#ProjectDir}\pinball_decryptor\__init__.py"; DestDir: "{app}\pinball_decryptor"; Flags: ignoreversion
-Source: "{#ProjectDir}\pinball_decryptor\core\*"; DestDir: "{app}\pinball_decryptor\core"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
+Source: "{#ProjectDir}\spike2_vpx\*.py"; DestDir: "{app}\spike2_vpx"; Flags: ignoreversion
 Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc,games\*,shots\*,*.log,*.raw"
 
 [Icons]

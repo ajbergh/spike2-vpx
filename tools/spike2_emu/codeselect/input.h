@@ -32,35 +32,12 @@ enum sel_event {
 };
 #define KEY_COUNT (EV_COUNT - 1)      /* keys are events minus EV_NONE */
 #define KEY_OF(ev) ((ev) - 1)
-/* RAW EVENTS (jjpio --learn): a frame bit that is NOT one of the menu's
- * buttons changed.  Coded above EV_COUNT so the queue carries them as they
- * are: EV_RAW_BASE + (byte * 8 + bit) * 2 + pressed.  Never a key. */
-#define EV_RAW_BASE 1000
-#define EV_RAW(byte, bit, pressed) (EV_RAW_BASE + ((byte) * 8 + (bit)) * 2 + ((pressed) ? 1 : 0))
-
 struct input_cfg {
     const char *nodebus;      /* hw: tty device */
     const char *spi;          /* hw: spidev, or "none" */
     int preamble_full;        /* hw: also replay the game's write-only frames */
     const char *padsw;        /* padsw: the 4096-byte shared file */
     const char *tables;       /* padsw: switch_list.txt, may be missing */
-    /* jjpio (a JJP machine, input_jjpio.c): the I/O board node, or NULL for
-     * the built-in list; the five cabinet buttons LEFT, RIGHT, START, PLUS
-     * (Volume+) and MINUS (Volume-) as a frame byte and bit (byte -1 = the
-     * defaults: jjpcrt's positions, and the device table's for the volume
-     * pair); and whether to log the cabinet bytes whenever they change
-     * (--learn) */
-    const char *jjpio;
-    int jjp_byte[5], jjp_bit[5];
-    int jjp_byte2[5], jjp_bit2[5];   /* a second place for each (byte -1 = none) */
-    int jjp_learn;
-    /* fast (a Barrels of Fun machine, input_fast.c, PAD-342): the FAST NET
-     * port, or NULL to probe /dev/ttyACM*; the LEFT, RIGHT and START buttons
-     * as switch numbers in the Neuron's SA: reply (-1 = the defaults:
-     * Labyrinth's), and a second switch for each (-1 = none).  --learn is
-     * jjp_learn above, one flag for both boards. */
-    const char *fast;
-    int fast_sw[3], fast_sw2[3];
 };
 
 struct input;
@@ -86,7 +63,6 @@ struct input {
 
 void input_base_init(struct input *in, const struct input_ops *ops);
 void input_sample(struct input *in, int key, int pressed);
-void input_raw(struct input *in, int code);           /* queue an EV_RAW() code (jjpio --learn) */
 int  input_poll(struct input *in, long long now_ms);   /* next event or EV_NONE */
 int  input_has(const struct input *in, int ev);        /* 0 = ev can never arrive */
 /* is the key held DOWN right now (its debounced level)?  The settings screens
@@ -98,14 +74,6 @@ const char *input_event_name(int ev);
 
 struct input *input_hw_open(const struct input_cfg *cfg);
 struct input *input_padsw_open(const struct input_cfg *cfg);
-/* jjpio: a JJP machine's cabinet buttons off /dev/jjpio (input_jjpio.c);
- * only in the JJP build - the Stern build does not link it */
-struct input *input_jjpio_open(const struct input_cfg *cfg);
-/* fast: a BOF machine's cabinet buttons off its FAST Neuron (input_fast.c);
- * only in the BOF build */
-struct input *input_fast_open(const struct input_cfg *cfg);
-/* pipe: LEFT / RIGHT / START as "sw L|R|S 1|0" lines on standard input -
- * a Dutch Pinball machine, from dpprocsw (input_pipe.c, PAD-853) */
 struct input *input_pipe_open(const struct input_cfg *cfg);
 /* hw only - no-ops on every other backend (they return -1 / do nothing):
  *   input_hw_bridge  sends the CPU board's bridge MCU a one-argument command

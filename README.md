@@ -1,201 +1,46 @@
-# Pinball Asset Decryptor
+# SPIKE 2 VPX
 
-Extract, view and change the sounds, videos, pictures and text inside a
-pinball machine's software, then build a card or update the machine will
-take back. One app for 130+ games across eleven manufacturers, on Windows,
-macOS and Linux.
+Play Stern SPIKE 2 games with Visual Pinball X on Windows x64. VPX runs the
+playfield and the SPIKE 2 runtime runs the game, LCD, and audio. The bundled
+`PAD.Controller` connects them.
 
-![The manufacturer picker: one card per manufacturer with its supported games and input formats](docs/screenshots/picker.png)
+## Set up
 
-## What you can do with it
+Open **SPIKE 2 VPX** from the Start menu, or run `python Spike2Vpx.pyw` from a
+checkout with x64 Python and Tcl/Tk. For a checkout, install the bundled
+Python dependencies with `python -m pip install -r requirements-windows.txt`.
 
-- **Extract** a game's assets from its SD card, disk image or update file
-  into ordinary files you can open and edit.
-- **Replace** sounds, videos, pictures and text, with side-by-side previews
-  of the original and yours. Replacements are converted to whatever the
-  game needs.
-- **Build** a new card image or update with your changes, or write them
-  straight onto the SD card or SSD.
-- **Share** your changes as a small mod pack, or apply someone else's.
-- **Emulate** the game on your PC to see and hear your changes before they
-  go near the machine.
-- **Play in Visual Pinball** (Windows): the Stern Spike 1 and Spike 2 and Spooky
-  emulators can drive a Visual Pinball X table. The
-  **Visual Pinball** tab lists the tables you downloaded from their authors
-  and the ones out there for the other machines, patches and opens them, and
-  gives table authors a checklist of every switch, coil and insert a game has.
-- **Multi-boot**: put several complete games on one Stern Spike 2 SD card
-  (or Jersey Jack install stick, or Barrels of Fun or Spooky update) and pick
-  one from a menu at power-up.
+The checklist covers WSL 2, WSLg, the private `SPIKE2-VPX` distribution,
+Visual Pinball X 10.8+ x64, and the controller. Run **Set up** and follow
+the checklist. If a restart is required, restart Windows and reopen the app.
+Use **Get VPX** and **Choose VPX** to install or select `VPinballX64.exe`.
+Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
-<p>
-  <a href="docs/screenshots/stern-extract.png"><img src="docs/screenshots/stern-extract.png" width="49%" alt="The Extract tab with a Stern Godzilla LE SD-card image detected and per-type extract checkboxes"></a>
-  <a href="docs/screenshots/replace-audio.png"><img src="docs/screenshots/replace-audio.png" width="49%" alt="The Replace Audio tab: 2,540 sound slots from a Godzilla LE card with a spectrogram preview of the selected sound"></a>
-  <a href="docs/screenshots/replace-images.png"><img src="docs/screenshots/replace-images.png" width="49%" alt="The Replace Images tab: searching 5,809 on-card images for 'logo' with a preview of the game-logo art"></a>
-  <a href="docs/screenshots/multi-boot.png"><img src="docs/screenshots/multi-boot.png" width="49%" alt="The Multi-boot tab: three games and a random pick on one card, the boot menu drawn as the machine will show it"></a>
-</p>
+## Prepare and play
 
-## Supported machines
-
-| Manufacturer | Games | What you can do |
-|---|---|---|
-| American Pinball | 6 | Extract, Write, Replace Audio/Video, Emulate |
-| Barrels of Fun | 4 | Extract, Write, Mod Pack, Replace Audio/Video, Emulate, Multi-boot (Labyrinth) (Bon Jovi: extract only) |
-| Capcom | 6 | Extract every sound as WAVs; capture DMD animations + sound with PinMAME |
-| Chicago Gaming Company | 5 | Extract, Write, Mod Pack, Replace Audio |
-| Data East (classic DMD) | 16 | Capture DMD animations + sound with PinMAME |
-| Dutch Pinball | 2 | Extract, Write, Apply Delta, Mod Pack, Replace Audio/Video, Emulate, Multi-boot (The Big Lebowski) |
-| Jersey Jack Pinball | 12 | Extract, Write, Mod Pack, Replace Audio/Video, Emulate, Direct-SSD, Multi-boot |
-| Pinball Brothers | 4 | Extract, Write, Apply Delta, Mod Pack, Replace Audio/Video, Emulate |
-| Sega (Whitestar DMD) | 18 | Capture DMD animations + sound with PinMAME |
-| Spooky Pinball | 14 | Extract, Write, Mod Pack, Replace Audio/Video, Emulate, Multi-boot |
-| Stern Spike 3 | 6 | Extract, Replace, Write, Emulate (decrypts the card's encrypted games partition from a LUKS/ext4 SD image or `.spk` and plays it on this PC; Write puts your edits back through the card's own encryption; needs your own OTP key, pasted or as a keyfile) |
-| Stern Spike 2 | 28 | Extract, Write, Direct-SD, Replace Audio/Video/Images/Text, Scenes, Partition Explorer, Emulate, Multi-boot |
-| Stern Spike 1 | 6 | Extract, Write, Replace Audio, Replace Images, Replace Text, Emulate |
-| Stern SAM | 26 | Extract, Write, Replace Audio, Replace Images (stills, fonts and DMD animation frames), Mod Pack; capture DMD animations with PinMAME |
-| Stern Whitestar | 17 | Capture DMD animations + sound with PinMAME |
-| Williams (WPC) | 41 | DMD scenes, animations, fonts and sound from the ROM; PinMAME capture |
-
-Game lists, file formats and what each manufacturer's tabs do in detail:
-**[Supported manufacturers](docs/guide/manufacturers.md)**.
-
-## Install
-
-Download the latest release for your computer from the
-**[Releases page](https://github.com/davidvanderburgh/pinball-asset-decryptor/releases)**:
-
-- **Windows** - `…_Windows.exe`. Run it and keep **Set up WSL2** ticked
-  (it may ask for a restart). Then, if the app's prerequisites row is red,
-  press **Install Missing**: it installs the app's own Linux with every tool
-  in it, so no Ubuntu or command line is needed.
-- **macOS** - `…_macOS_AppleSilicon.dmg` (M1 or newer) or
-  `…_macOS_Intel.dmg`. Drag it to Applications; the first launch needs
-  **Open Anyway** in System Settings → Privacy & Security, because the app
-  is not signed by Apple.
-- **Linux** - `…_Linux_x86_64.AppImage`. `chmod +x` it and run it, then
-  press **Install Missing** in the app's prerequisites row (apt or pacman).
-
-The app checks for updates itself and, on Windows, installs them in one
-click. Step-by-step help, troubleshooting and the tools each manufacturer
-needs: **[Installing](docs/guide/install.md)**.
-
-## Quick start
-
-New here? The app opens on a **Getting started** page the first time: a
-short video and the steps for each common job, from installing to a
-multi-boot card (the top bar's **Getting started** button brings it back).
-**[Getting started: your first mod](docs/guide/getting-started.md)** walks
-through swapping one song, step by step, and
-**[Common problems](docs/guide/common-problems.md)** has what new users
-most often run into.
-
-1. Launch the app and **pick a manufacturer**. The prerequisites row turns
-   green once the tools it needs are installed.
-2. On **Select card**, browse to the card image, update file or SD card.
-3. On **Extract**, choose a project folder and press **Extract**.
-4. Change what you want: on the **Replace** tabs, or by editing the
-   extracted files directly.
-5. On **Write**, build the new image (or write straight to the card), and
-   put it in the machine. Keep a backup of the original first.
-
-The **?** button in the app opens tips for whichever tab you are on.
-Something wrong? **Report a problem** in the top bar sends the developer
-what happened, with the app's log and the card's details, after showing
-you exactly what goes. No email needed: the app tells you when a release
-addresses your report.
-
-Questions, or something to show off? The **Discord** button in the top bar
-(also ⚙ > **Join our Discord**) opens the PAD Discord server.
-
-## Documentation
-
-| Page | What is in it |
-|---|---|
-| [Getting started](docs/guide/getting-started.md) | Your first mod, step by step: swap one song and put it on the machine |
-| [Common problems](docs/guide/common-problems.md) | What new users most often run into, and what to do |
-| [Using the app](docs/guide/using-the-app.md) | Every tab from Extract to Mod Pack, projects, history and the log |
-| [Emulate](docs/guide/emulate.md) | Playing a game on this PC: Stern Spike 2, Stern Spike 3, Jersey Jack, Dutch Pinball |
-| [Multi-boot cards](docs/guide/multi-boot.md) | Several games on one card with a menu at power-up |
-| [AI agents](docs/guide/ai-agents.md) | Letting an AI agent (Claude, Cursor...) use the app for you through MCP |
-| [Color profile maths](docs/guide/color-profile-maths.md) | Every step of the Color profile tab, in order, with its limits |
-| [Supported manufacturers](docs/guide/manufacturers.md) | Per-manufacturer detail, formats and quirks |
-| [Installing](docs/guide/install.md) | Install, prerequisites, troubleshooting, auto-update |
-| [Docker](docs/guide/docker.md) | Run it on a server (Unraid, a NAS) and use it from any PC in a browser, sound included |
-| [Disclaimer](docs/guide/legal.md) | The full legal notes: DMCA, manufacturer EULAs, no warranty |
-| [Development](docs/development.md) | Running from source, architecture, adding a manufacturer, tests, building installers |
-| [Architecture notes](docs/architecture/README.md) | How each manufacturer's formats and pipelines work |
-
-## Disclaimer
-
-This is an independent interoperability tool, **not affiliated with or
-endorsed by** any pinball manufacturer. It ships **no game content**: no
-ROMs, sounds, pictures or keys. It works only on files you supply, and is
-meant for personal customisation of a machine you own; don't distribute
-modified game assets.
-
-Some manufacturers' license terms (Stern's among them) forbid modifying
-the machine's software, and they warn that doing so can stop the machine
-working or cut it off from their online services. **Always keep a complete,
-working backup** before you change a machine: a bad update can leave it
-unable to boot. There is no warranty; use it at your own risk, and don't
-contact a manufacturer's support about a machine running modified code.
-
-Read the **[full disclaimer](docs/guide/legal.md)** before use; the app also
-shows it on first launch.
-
-## License
-
-[MIT](LICENSE). Each upstream decryptor's reverse-engineering work is
-credited in its source project; this is the unification layer.
-## SPIKE 2 with VPX
-
-Use `Play-Spike2Vpx.ps1` with a prepared SPIKE 2 SD image or an extracted game
-directory and a matching PAD-patched VPX table. The launcher uses an existing
-WSL/WSLg emulator runtime and `PAD.Controller` registration. Pass the image
-with `-Card`. Pass a Windows or WSL directory containing the actual `game`
-executable with `-GameDir`. If a Windows folder has no `game` executable,
-`-GameDir` looks for a `.raw` image there, preferring a unique match for the
-table's native title. Use `-Card` to choose between multiple candidates.
+Supply your own SPIKE 2 SD-card image and a compatible VPX table. Godzilla LE
+is the reference title. The VPX kit can create a patched copy of a recognized
+table. Keep the patched table and `PADSPIKE2.vbs` together.
 
 ```powershell
-.\Play-Spike2Vpx.ps1 -GameDir '/home/pad/games/godzilla_le' `
-    -Table 'D:\Visual Pinball\Tables\Godzilla (PAD).vpx'
-
-.\Play-Spike2Vpx.ps1 -Card 'D:\Cards\godzilla_le.sdcard.raw' `
-    -Table 'D:\Visual Pinball\Tables\Godzilla (PAD).vpx'
+python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.vpx"
+.\Play-Spike2Vpx.ps1 -Card "C:\Images\godzilla_le.sdcard.raw" -Table "C:\Tables\Godzilla limited edition (PAD).vpx"
 ```
 
-Use `-VpxExe` or `-Distro` to override the existing kit settings. `-Python`
-selects a different Windows Python with `olefile` installed. Without it,
-the launcher prefers Python bundled with PAD and then Python on `PATH`.
+The launcher builds the guest filesystem from the card on its first run. The
+source image is opened read-only. You can override detection with `-VpxExe` or
+select a prepared WSL distribution with `-Distro`. Closing VPX stops the run.
+Setup is the current GUI milestone. Image preparation, table preparation,
+and Play are available through the command-line tools.
 
-The launcher starts Stern's LCD and audio and opens the patched table once
-the game can accept the bridge. It skips the virtual playfield, ball feeder,
-topper, and replay recording. Launching a `game` executable directly also
-skips the card mount and cache. VPX owns the trough and playfield. The
-controller uses the pushed `padlink` transport
-by default. Close VPX to shut down the emulator and release its rig slot.
-Startup failures report the runtime log path when available.
+## Build and test
 
-## SPIKE 2 VPX setup preview
+Build the installer with `installer\build_spike2_vpx.ps1`, full x64 Python
+with Tcl/Tk, and Inno Setup 6.3 or later. The installer bundles the tools and
+Python. The first setup downloads the upstream runtime image and verifies
+its pinned SHA-256. Uninstall preserves the private runtime and player data.
 
-Open **SPIKE 2 VPX** from the Start menu after installing the standalone build.
-From a source checkout on Windows x64 with Python and Tcl/Tk, run
-`python Spike2Vpx.pyw`. Install `pywin32`, `olefile`, and `sounddevice` into that
-Python to use the controller, table reader, and Windows audio bridge.
-
-**Set up** checks Windows Subsystem for Linux, WSLg, the private `SPIKE2-VPX`
-distribution, Visual Pinball X, and the bundled `PAD.Controller`. Setup may ask
-for administrator permission. If it reports **Restart required**, restart Windows
-and reopen the app. Use **Get VPX** for the upstream installer and **Choose VPX**
-to select `VPinballX64.exe` when detection misses it. Settings and setup logs are
-under `%LOCALAPPDATA%\Spike2Vpx`. Uninstall leaves the private distribution and
-data in place.
-
-Build the x64 installer with `installer\build_spike2_vpx.ps1`, a full x64
-Python installation with Tcl/Tk, and Inno Setup 6.3 or later. Setup downloads the
-pinned PAD runtime image on first run. On a source checkout, pass
-`-Distro SPIKE2-VPX` and the selected `-VpxExe` to `Play-Spike2Vpx.ps1` to use
-that runtime. The installed launcher picks up the standalone Setup choices.
-The Setup screen checks prerequisites. Image preparation, table preparation,
-and Godzilla LE play verification are later milestones.
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+```

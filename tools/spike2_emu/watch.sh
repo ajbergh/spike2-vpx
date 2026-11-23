@@ -943,22 +943,6 @@ if [ -n "$LCD_NODE" ]; then
     # show the card's own artwork instead of a drawn approximation.
     # ~10 s the first time (it decodes candidate textures), cached after;
     # failure is not fatal - the panel falls back to its drawing.
-    if [ ! -s "$PAD_TABLES/$GAME/lcd/tvframe.png" ]; then
-        if python3 "$RIG/lcdframe.py" "$GAME" >/dev/null 2>&1; then
-            echo "[watch] villain set: TV artwork pulled from the card's scene textures"
-        fi
-    fi
-    # THE ATTRACT CARD (item 83): the green BATMAN logo the real set opens
-    # attract with is the card's only 1280x720 lcd texture; lcdlogo.py
-    # derives it once and the panel interposes it when the wire's shape
-    # says a game just ended. Failure is not fatal - no card, no interlude.
-    if [ ! -s "$PAD_TABLES/$GAME/lcd/logo.png" ]; then
-        if python3 "$RIG/lcdlogo.py" "$GAME" >/dev/null 2>&1; then
-            echo "[watch] villain card: attract logo pulled from the card's scene textures"
-        fi
-    fi
-    # THE STILL SET (item 83): the board holds one stored still per
-    # command id and never plays video - measured from machine footage;
     # lcdstills.py carries the table and each entry's provenance. The
     # map's existence is what switches the panel to stills mode, so this
     # runs even when cached (it prints the mapped/pinned count).
@@ -1392,7 +1376,6 @@ setsid_as_seer() {
 # standing rule is that two copies of one fact eventually disagree. `/init` is
 # the WSL side of a Windows pythonw.exe reached through interop; `python3` is
 # the same window on a Linux desktop, where it is an ordinary local process.
-pf_up() { [ -n "$(pad_pids -f '^(/init|python3?) .*playfield\.py')" ]; }
 # A Windows playfield process has no environment this side can read, so a slot
 # >= 1 puts its slot on the window's COMMAND LINE (playfield.py ignores it; the
 # Stop-Process filters here and in killgame.sh match on it). Slot 0's windows
@@ -1592,7 +1575,6 @@ teardown() {
     pad_pkill -9 -f 'padvidhost.py'
     [ -n "$AUTOPG" ] && kill -9 -"$AUTOPG" 2>/dev/null
     pad_pkill -9 -f 'autoattract.sh'
-    [ -n "${PFWATCHPID:-}" ] && kill "$PFWATCHPID" 2>/dev/null
     [ -n "$BALLPG" ] && kill -9 -"$BALLPG" 2>/dev/null
     pad_pkill -9 -f 'ballfeed[.]py'
     [ -n "${SPEEDPG:-}" ] && kill -9 -"$SPEEDPG" 2>/dev/null
@@ -1675,58 +1657,6 @@ teardown() {
         [ "$DROP" = 1 ] && chown "$PAD_USER" "$ROOT/dump/padlcd.last" 2>/dev/null
     fi
     rm -f "$LCD_HOST"
-
-    # ...AND THEN VERIFY IT, because "it closes itself" was only ever true of
-    # the WINDOW. The playfield is a Windows process reached through interop,
-    # and its WSL-side stub outlived the window seven times over in one session
-    # (oldest 2.5 h) while alive.sh reported the machine clean: once the stub's
-    # interop Relay has died, the stub sits in poll() forever with nothing
-    # behind it. Wait for the polite exit first - that is what lets it save its
-    # window position (GONE_POLLS is ~2 s) - then kill what is left.
-    #
-    # AND KILLING THE STUB IS NOT ENOUGH. The two halves are NOT symmetric, both
-    # directions measured 2026-08-05:
-    #   kill the WINDOWS process -> the stub exits by itself. Clean.
-    #   kill the STUB            -> the Windows process lives on. The playfield
-    #                               window sat on the desktop with nothing
-    #                               behind it, showing "no emulator" forever.
-    # So the forced path asks Windows FIRST and only then sweeps the stub.
-    # Matched on the SCRIPT PATH, never on the image name alone: killing every
-    # pythonw.exe would take out whatever else the user is running.
-    #
-    # Both loops give the polite close a real chance (5 s, against the ~2 s
-    # GONE_POLLS window) because it is worth having: the polite exit is what
-    # saves the window position, and it is what usually happens. It failed in
-    # one card run out of three, so this path is not theoretical.
-    #
-    # ...AND WHEN PAD OPENED THE WINDOW, NONE OF THIS APPLIES AND MUST NOT BE
-    # "FIXED" TO. A window the app launched (PF_WINLAUNCH, above) has no
-    # WSL-side stub to find, so the pgrep is correctly false - and the forced
-    # path below is a powershell.exe call, which is INTEROP, i.e. the very
-    # thing that was missing and sent the launch to the app in the first
-    # place. Removing the LED block is what closes that window (it polls for
-    # it), and the app holds the process handle for the case where it does
-    # not. Whoever owns the launch owns the teardown.
-    if [ "${PF_WINLAUNCH:-0}" != 1 ] && pf_up; then
-        for _ in $(seq 1 10); do
-            sleep 0.5
-            pf_up || break
-        done
-        if pf_up; then
-            echo "[watch] the playfield did not close itself; closing it the hard way"
-            # `Name -like 'python*'` excludes THIS query: its own command line
-            # contains the pattern string, so a CommandLine-only filter kills
-            # the powershell.exe running it. Same self-match trap as pgrep.
-            /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile \
-              -Command "Get-CimInstance Win32_Process |
-                        Where-Object { \$_.Name -like 'python*' -and
-                                       \$_.CommandLine -like '*spike2_emu\playfield.py*' -and
-                                       \$_.CommandLine $PF_SLOTMATCH } |
-                        ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
-              >/dev/null 2>&1
-            pad_pkill -9 -f '^(/init|python3?) .*playfield\.py'
-        fi
-    fi
 
     # PAD-764: this boot's switch log, beside the NVRAM its start recorded
     # (runrec.py). The guest is gone, so the log is whole.
@@ -2710,176 +2640,6 @@ if :; then
     fi
     rm -f "$TBL_OUT"
 fi
-if [ "${PAD_PLAYFIELD:-1}" != 0 ]; then
-    # TWO WAYS TO OPEN ONE WINDOW, AND WHICH ONE IS RIGHT IS A PROPERTY OF THE
-    # MACHINE, NOT A PREFERENCE.
-    #
-    # On a Linux desktop the playfield is an ordinary local Tk process talking
-    # to the same X server as the game, and that is all it should ever have
-    # been. The elaborate path below it exists because THIS WSL HAS NO TK AT
-    # ALL - no tkinter, no gi/Gtk, no Qt - and installing one needs a sudo the
-    # rig does not have. Under WSL the window therefore runs as a WINDOWS
-    # process reached through interop, which is why it needs a translated path,
-    # WSLENV to carry anything at all, and pythonw.exe rather than python.exe.
-    # Whether the playfield shows its Save/Load state controls. The app's
-    # Emulate tab owns the user-facing toggle: toggle ON boots PAD_PIVOT=1
-    # (the only checkpointable shape), so "pivot boot" IS the enable signal
-    # and a hand-run PAD_PIVOT session keeps its buttons with no extra flag.
-    # It rides the COMMAND LINE because the Windows-side window only sees
-    # WSLENV-listed variables, and an argv is one less thing to keep in step.
-    #
-    # ...AND WHAT THE RUN TURNED OUT TO BE BEATS WHAT IT WAS ASKED TO BE. The
-    # gate above withdraws a pivot this machine cannot do, but run_game.sh can
-    # still be refused by the kernel at the pivot itself - and it now answers
-    # that by booting the ordinary way rather than by dying. That run is up,
-    # correct and NOT checkpointable, and this line is written after the guest
-    # has started, so the log already says so if it happened. Buttons that can
-    # only fail are the thing this flag exists to prevent; asking the log costs
-    # one grep and covers the case no pre-flight can.
-    PF_STATES=""
-    if [ "${PAD_SAVESTATES:-${PAD_PIVOT:-0}}" = 1 ] &&
-       ! grep -q '^\[run\] pivot_root failed' "$LOG" 2>/dev/null; then
-        PF_STATES="--savestates"
-    fi
-    if [ "$IS_WSL" = 0 ]; then
-        PF_PY=${PAD_PF_PYTHON:-python3}
-        # THE WINDOW IS A WEB PAGE (2026-09-23): playfield.py needs nothing
-        # but python3 itself, and pfweb.py picks how to show it - GTK WebKit
-        # (the macOS container installs it; most Linux desktops have it),
-        # else a Chromium-family browser's app window, else a browser tab.
-        # So the only thing to check here is that python3 runs at all.
-        if "$PF_PY" -c 'import json' >/dev/null 2>&1; then
-            : > "$PFLOG" 2>/dev/null
-            setsid_as_user "$PF_PY" "$RIG/playfield.py" "$GAME" $PF_STATES $PF_SLOTARG </dev/null >>"$PFLOG" 2>&1 &
-            PF_LAUNCHED=1
-            echo "[watch] virtual playfield window opening (PAD_PLAYFIELD=0 to skip)"
-        else
-            echo "[watch] $PF_PY does not run, so no playfield window." >&2
-            echo "[watch]   set PAD_PF_PYTHON to a working python3" >&2
-        fi
-    else
-        # ★ PAD-99: CHOSEN, NOT WHATEVER PATH HANDS OVER.
-        #
-        # This line used to be `PF_PY=${PAD_PF_PYTHON:-pythonw.exe}` and the
-        # launch below asked PATH for it. With interop on, PATH here carries
-        # WINDOWS' PATH, so `pythonw.exe` is whichever Python the user happened
-        # to install - and dragonrr's was a python.org 3.13 with no Pillow, so
-        # playfield.py died on its first artwork import. Game window, sound and
-        # switches all fine; no playfield, and no reason visible anywhere he
-        # was looking. PAD's own bundled Python has tkinter AND Pillow (it is
-        # what the app draws itself with), it has been handed to this rig as
-        # PAD_WINPYTHON since PAD-95, and running playfield.py with it by hand
-        # opened the window first try. Nothing was missing but the CHOICE.
-        #
-        # pad_win_pf_python asks the same candidate list the sound path asks
-        # (ours first, then the `py` launcher's, then PATH) and probes each one
-        # for the two imports the window is drawn with. PAD_PF_PYTHON still
-        # wins outright: an explicit answer is not something to second-guess.
-        PF_PY=${PAD_PF_PYTHON:-$(pad_win_pf_python)}
-        PF_BEST=1
-        if [ -z "$PF_PY" ]; then
-            # NOTHING HERE CAN DRAW IT - so launch the best there is anyway and
-            # let it say why. The traceback lands in $PFLOG and the check after
-            # the guest comes up prints it, which names the missing package to
-            # the person who can install it. Silence is what this ticket was.
-            PF_PY=$(pad_win_pf_python_any)
-            PF_BEST=0
-        fi
-        # The rig's own path, as Windows sees it. `wslpath -w` is asked rather
-        # than the answer being written down: the literal here named one user's
-        # checkout on one machine's C: drive.
-        PF_WIN=$(pad_win "$RIG/playfield.py")
-        # The title goes on the COMMAND LINE, not in the environment: this is a
-        # Windows process started through interop and only variables named in
-        # WSLENV cross that boundary, which is one more thing to keep in step.
-        #
-        # PAD_ROOT and PAD_TABLES DO cross, through pad_export_win, and they
-        # must: the playfield window is a Windows process that has to open files
-        # inside WSL, and `/p` makes WSL translate each value into its
-        # `\\wsl.localhost` form on the way. Without it the window has to shell
-        # out to `wslpath` to work out where it is reading from - which it can,
-        # but paying ~200 ms per question for something this side already knows
-        # is silly.
-        pad_export_win
-        # PAD_PF_LOG reaches the playfield ONLY through WSLENV, same mechanism.
-        # The measurement that produced the 30 fps number had to bypass watch.sh
-        # entirely for want of this line.
-        [ -n "${PAD_PF_LOG:-}" ] && \
-            export WSLENV="${WSLENV:+$WSLENV:}PAD_PF_LOG/p"
-        # The two fade knobs cross the same way (no /p - they are numbers, not
-        # paths). Without these lines "tunes live with no rebuild" was only
-        # true for a window started by hand on the Windows side.
-        [ -n "${PAD_PF_FADE_UNIT_MS:-}" ] && \
-            export WSLENV="${WSLENV:+$WSLENV:}PAD_PF_FADE_UNIT_MS"
-        [ -n "${PAD_PF_FADE_MS:-}" ] && \
-            export WSLENV="${WSLENV:+$WSLENV:}PAD_PF_FADE_MS"
-        # PAD-204: the Emulate tab's volume / Mute file, so the window's status
-        # bar moves the same knob. The app hands it over as a WINDOWS path
-        # already, so no /p - the same crossing playaudio.sh makes for the
-        # audio player.
-        [ -n "${PAD_AUDIO_CTL:-}" ] && \
-            export WSLENV="${WSLENV:+$WSLENV:}PAD_AUDIO_CTL"
-        if [ -n "$PF_PY" ] && command -v "$PF_PY" >/dev/null 2>&1; then
-            if [ "$PF_BEST" = 0 ]; then
-                echo "[watch] no Windows Python on this PC has pywebview and"
-                echo "[watch]   Pillow (PAD's own does), so the playfield opens"
-                echo "[watch]   with $PF_PY as an Edge app window instead; if"
-                echo "[watch]   no window appears, the reason is below."
-            fi
-            # TRUNCATE, then append: one run's log, not every run's. The window
-            # is a Windows process here and its traceback would otherwise go
-            # nowhere at all - pythonw.exe has no console to print one to.
-            : > "$PFLOG" 2>/dev/null
-            setsid_as_user "$PF_PY" "$PF_WIN" "$GAME" $PF_STATES $PF_SLOTARG </dev/null >>"$PFLOG" 2>&1 &
-            PF_LAUNCHED=1
-            # NAMED, not just announced (PAD-99). Which interpreter opened the
-            # window is the fact that settles "I have no playfield" in one
-            # paste, and the run said nothing about it for as long as the
-            # answer was whatever PATH held.
-            echo "[watch] virtual playfield window opening with $PF_PY"
-            echo "[watch]   (PAD_PLAYFIELD=0 to skip)"
-        else
-            # ---- ASK THE APP TO OPEN IT, because it is a Windows process too.
-            #
-            # THE FAULT: a user's WSL has interop switched off (/etc/wsl.conf,
-            # [interop] enabled=false), so this distro cannot execute a Windows
-            # binary at all - and the playfield window is a Windows binary,
-            # because this WSL has no Tk. His window could never open itself,
-            # and all the rig could do was print a command for him to type
-            # before every single run.
-            #
-            # THE ASYMMETRY THAT MAKES THIS WORK, and it is the whole point:
-            # interop is LINUX -> WINDOWS. Windows -> Linux (`wsl.exe`) is
-            # unaffected, so everything the window does once it is up - reading
-            # dump/padled, running swpoke.py, asking wslpath - still works. It
-            # is only the LAUNCH that cannot cross, and PAD is already standing
-            # on the other side: it is a Windows process, running a Python that
-            # has tkinter (it is drawing its own window with it). So the run
-            # asks, and the app spawns it. Same for a machine whose interop is
-            # fine but has no pythonw.exe on PATH - the branch is the same and
-            # so is the answer.
-            #
-            # THE PATHS GO WITH IT, ALREADY TRANSLATED. The window needs the
-            # rootfs and the tables directory in Windows form; WSLENV's `/p`
-            # normally does that during the interop exec, which is precisely
-            # the step not happening here. wslpath is an ordinary Linux binary
-            # in the distro, so it answers with interop off.
-            PF_WINLAUNCH=1
-            echo "PAD_PLAYFIELD_WINDOWS_LAUNCH game=$GAME" \
-                 "savestates=$([ -n "$PF_STATES" ] && echo 1 || echo 0)" \
-                 "root=$(pad_win "$ROOT" 2>/dev/null)" \
-                 "tables=$(pad_win "$TABLES" 2>/dev/null)" \
-                 "slot=$PAD_SLOT"
-            echo "[watch] this WSL cannot start a Windows program (interop is"
-            echo "[watch]   off, or there is no Windows Python it can reach),"
-            echo "[watch]   so PAD has been asked to open the playfield"
-            echo "[watch]   window instead."
-            echo "[watch]   Running watch.sh by hand? Open it yourself with:"
-            echo "[watch]   pythonw tools\\spike2_emu\\playfield.py $GAME"
-        fi
-    fi
-fi
-
 # NO Windows-side window mover. padwinpos.py briefly restored positions with
 # SetWindowPos and it made both windows UNDRAGGABLE: a programmatic move on a
 # WSLg RAIL window happens behind the compositor's back, the X side and the
@@ -2982,63 +2742,6 @@ grep -a '^\[modes\] ' "$LOG" 2>/dev/null
 # seconds this took are seconds the window had to fail in; and it costs no
 # sleep of its own, which the launch site could not have avoided.
 #
-# NOT when PAD opened the window (PF_WINLAUNCH): that one has no WSL-side
-# process to find and the app reports its own failures - the same asymmetry
-# teardown documents at length. NOT when nothing was launched either.
-#
-# ...AND ASKED AGAIN UNTIL THE WINDOW SAYS IT IS UP (PAD-629). The guest is up
-# a second or so after the launch on a fast PC, and a Windows window through
-# interop is not even running its first line by then: its WSL-side stub
-# answers pf_up, so a window that quit three seconds later - a traceback, or
-# a "window already exists" exit - passed this check and the run log said
-# nothing at all ("missing playfield", restart WSL, Reset windows, still
-# missing). pfweb prints "pfweb: window up" once the window system has it;
-# until that line or the process's end, a watcher keeps asking, and says
-# which it was. Quiet when the run itself is ending: teardown closes it.
-pf_said_why() {
-    echo "[watch] the playfield window is not running - it started and stopped."
-    if [ -s "$PFLOG" ]; then
-        echo "[watch]   what it said (full log: $PFLOG):"
-        tail -8 "$PFLOG" | sed 's/^/[watch]   /'
-    else
-        # An empty log is itself the finding: the interpreter never got as far
-        # as running the script, so the fault is the LAUNCH, not the window.
-        echo "[watch]   ...and wrote nothing, so $PF_PY never ran it. Open it"
-        echo "[watch]   by hand to see why: $PF_PY <rig>/playfield.py $GAME"
-    fi
-    echo "[watch]   the game itself is unaffected."
-}
-PFWATCHPID=""
-if [ "${PF_LAUNCHED:-0}" = 1 ]; then
-    if ! pf_up; then
-        pf_said_why
-    else
-        (
-            _i=0; _n=$(( ${PAD_PF_WAIT:-60} * 2 ))
-            while [ "$_i" -lt "$_n" ]; do
-                if grep -aq '^pfweb: window up' "$PFLOG" 2>/dev/null; then
-                    # PAD-924: up, but on a lower rung than its own window
-                    # (pywebview's .NET would not load) - say which and why
-                    grep -a '^pfweb: fell back' "$PFLOG" | head -3 |
-                        sed 's/^pfweb: /[watch] playfield window /'
-                    exit 0
-                fi
-                pf_up || break
-                sleep 0.5
-                _i=$((_i + 1))
-            done
-            pad_guest_up || exit 0
-            if pf_up; then
-                echo "[watch] the playfield window has not come up after $((_i / 2)) s."
-                [ -s "$PFLOG" ] && tail -8 "$PFLOG" | sed 's/^/[watch]   /'
-            else
-                pf_said_why
-            fi
-        ) &
-        PFWATCHPID=$!
-    fi
-fi
-
 # Carry the game from Tech Alerts to attract mode without a human. It is a
 # separate script and a separate process because it spends most of its life
 # asleep waiting on the boot, and this loop must stay responsive to the window

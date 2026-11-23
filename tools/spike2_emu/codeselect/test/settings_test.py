@@ -31,7 +31,6 @@ match it."""
 import os
 import re
 import struct
-import importlib.util
 import subprocess
 import sys
 import time
@@ -76,17 +75,6 @@ def pad_cp(sat, gain, gamma, lift):
         out = out.replace("#" * 8, "%.6f" % v, 1)
     return ("highp vec4 pad_cp(highp vec4 f){highp float a=f.a;highp vec3 c=clamp(f.rgb,0.0,1.0);"
             + out + "return vec4(c,a);}")
-
-
-def _colour_profile():
-    """core/colour_profile.py of the repo this test sits in (it imports nothing of the app)"""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..",
-                        "pinball_decryptor", "core", "colour_profile.py")
-    spec = importlib.util.spec_from_file_location("pad_colour_profile", path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def main():
@@ -509,7 +497,7 @@ def main():
     if rc != 2 or "in the adjustable shape" not in o or os.path.exists(out):
         fail("(apply) the old shape: rc %d" % rc, o)
     # PAD-537: brightness and contrast have no slot of their own: the copy carries them folded
-    # into gain and gamma exactly as the PC's Profile.curve() folds them
+    # into gain and gamma in the rewritten shader.
     with open(values, "w") as f:
         f.write("p7:img1|1.10 1.20 1.35|1 1 1|0 0 0|0.80|1.10 1.15\n")
     rc, o = apply(1)
@@ -520,13 +508,6 @@ def main():
                     rb"vec3\(([0-9.]{8}),([0-9.]{8}),([0-9.]{8})\)\);", open(out, "rb").read())
     if not got:
         fail("(apply) brightness/contrast: no pad_cp in the copy")
-    got = [float(v) for v in got.groups()]
-    cp = _colour_profile()
-    gamma, gain, _lift = cp.Profile(gamma=(1.10, 1.20, 1.35), saturation=0.80, brightness=1.10,
-                                    contrast=1.15).curve()
-    expect = [0.80] + list(gain) + list(gamma)
-    if any(abs(a - b) > 2e-6 for a, b in zip(got, expect)):
-        fail("(apply) brightness/contrast folded to %r, the PC folds them to %r" % (got, expect))
     # 6. settings=off: the owner left the card out - the menu has the images' cards alone
     off = os.path.join(t, "off.conf")
     with open(off, "w") as f:

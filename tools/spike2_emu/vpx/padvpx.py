@@ -1,72 +1,18 @@
 #!/usr/bin/env python3
-"""padvpx.py - the Visual Pinball kit: patch a table, register the controller,
-name the card a title boots, start or stop a run by hand.
+"""Inspect, patch and run SPIKE 2 VPX tables.
 
-    padvpx patch "<table.vpx>" [--out DIR] [--card IMAGE] [--title TITLE]
-        Recognise the table (each map carries the words that identify it:
-        drhotwing's Rush, JP's Foo Fighters, marty02's Godzilla) and write
-        "<name> (PAD).vpx" beside it (or into DIR), re-signed, with the
-        Spike 2 emulator behind it. --card records which card image the
-        title boots when Visual Pinball opens the table and no run is up.
-        A table more than one title's map fits (JP's Foo Fighters: Pro or
-        LE) takes --title, else the title of --card, else the first with
-        a card known, else its preferred map (the Pro).
-    The app's Visual Pinball tab is the same kit with
-    buttons: vpxsetup.py is its half here.
-    padvpx setup "<table.vpx>" <image.raw>
-        The one step for a shared table: registers the controller if it is
-        not, patches the table beside itself, records the card.
-    padvpx lcd top | monitor <n> | <x> <y> <w> <h> | off
-        Where the game's LCD window goes when the controller starts a run:
-        on top of a full-screen Visual Pinball in the upper middle of the
-        main screen (the default), filling screen n, or at a rectangle.
-        Placed once; drag it anywhere after that.
-    padvpx player <x> <y> [<w> <h>] | monitor <n> | off
-        Where Visual Pinball's own playfield window goes: it is borderless
-        in windowed mode and cannot be dragged, and 10.8 ignores the
-        position in its ini, so the controller moves it there once when a
-        table opens (Visual Pinball's own size unless w h are given).
-    padvpx playfield on | monitor <n> | <x> <y> <w> <h> | off
-        The rig's own virtual playfield window as well (off unless asked),
-        placed like the LCD.
-    padvpx card <title> <image.raw>      record a title's card (or `padvpx card`: list)
-    padvpx library <dir>                  a directory of cards: the newest build of a title is its card
-    padvpx register | unregister          PAD.Controller in the registry (this Python, this folder)
-    padvpx run <title> [--hidden] [--mute]   start a run the way the controller would
-    padvpx stop <title>                   stop a run padvpx or the controller started
-    padvpx status                         the kit: controller, runs on the board, cards
-    padvpx tables                         the tables this kit can patch
-    padvpx checklist <title> [--table "<file.vpx>"] [--out DIR]
-        For whoever builds or finishes a table of <title> (PAD-941): a
-        Markdown checklist of every switch, coil and insert the game has,
-        with its number and what a table does for it; with --table, what
-        that table has and every part the kit's map for it leaves out, or a
-        starter map when the kit has none. From the title's device tables
-        (vpxauthor.py), so the title must have run once on this PC.
-    padvpx probe <title> [--for SECS] [--press NAME[=MS]]... [--levels] [--json]
-        From the checklist to the running game (PAD-1303): attaches to the
-        title's run and prints each change as it happens, by name - every
-        LED and unnamed channel that lights (GI too), each coil the game
-        fires with its pulse and hold, every switch that moves and who
-        moved it (PAD's ball feed and helpers, the keyboard, the probe).
-        --press closes a switch by name or id; while it runs, stdin takes
-        `press NAME [MS]`, `hold NAME`, `release NAME`, `quit` (vpxprobe.py).
-    padvpx match-leds <title> --table "<file.vpx>" [--into MAP.json] [--confirm]
-        Proposes the machine's LED for each Light in the table by where it
-        stands (device_xy.txt laid over the table), for the author to
-        confirm: "<table> - LED matches.json", a `lamps` section with the
-        unsure ones marked GUESS; --confirm asks about each, --into adds
-        them to a map (vpxstubs.py).
-    padvpx stubs <title> --table "<file.vpx>" [--out FILE] [--print]
-        Appends a sub to the table's script for every switch, coil and
-        insert it has not got (sw_<NAME>_Hit, a default per coil kind -
-        magnet, drop bank, kicker, post, gate, trough - and l_<NAME>
-        lights), writing "<name> (stubs).vpx": placing an object with the
-        stub's name is then enough (vpxstubs.py).
-    padvpx titles                         the titles whose device tables are on this PC
+    padvpx tables
+    padvpx patch <table.vpx> [--out <folder>] [--card <image>] [--title <title>]
+    padvpx card [<title> <image>]
+    padvpx library <folder>
+    padvpx cache [on|off|check]
+    padvpx lcd <layout>
+    padvpx player <layout>
+    padvpx run <title> [--hidden] [--mute]
+    padvpx stop <title>
+    padvpx status
 
-A run started here or by the controller takes a rig slot as PAD-VPX, visible
-and with sound; nothing of the app's or a session's is touched.
+Register the controller from the SPIKE 2 VPX Setup window.
 """
 import json
 import os
@@ -99,6 +45,8 @@ def maps():
     for f in sorted(os.listdir(HERE)):
         if f.endswith(".shadow.json") or f.endswith(".vpxmap.json"):
             m = json.load(open(os.path.join(HERE, f), encoding="utf-8"))
+            if (m.get("platform") or "spike2").lower() != "spike2":
+                continue
             title = m.get("title") or f.split(".")[0]
             game = m.get("game")            # same rule as padlaunch.game_for
             out[title] = {"kind": "shadow" if f.endswith(".shadow.json") else "mashup",
@@ -336,49 +284,6 @@ def run(title, hidden=False, mute=False):
     if not card:
         print("no card for %s (looked in %s)" % (title, padlaunch.card_places(title, platform)))
         return 2
-    if platform == "spike1":
-        # PAD-943: one Spike 1 rig, start.sh with the card; its env is
-        # padlaunch.Spike1Launch's, hidden / muted as asked
-        launch = padlaunch.Spike1Launch(title, card)
-        other = launch.other_run()
-        if other:
-            print("the Spike 1 rig is running %s (%s); stop it first"
-                  % (other.get("game"), other.get("label") or "the app"))
-            return 1
-        env, card_wsl = launch.env()
-        if hidden:
-            env = [e for e in env if not e.startswith("PAD_HIDDEN=")] + ["PAD_HIDDEN=1"]
-        if mute or hidden:
-            env = [e for e in env if not e.startswith("PAD_AUDIO=")] + ["PAD_AUDIO=0"]
-        cmd = launch.head() + env + ["bash", "%s/start.sh" % launch.rig_wsl, card_wsl]
-        out = open(launch.logfile, "ab")
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                         creationflags=_CREATE_NO_WINDOW)
-        print("started %s on the Spike 1 rig from %s (log %s)" % (title, card, launch.logfile))
-        return 0
-    if platform in ("spooky", "bof"):
-        # PAD-952: tools/spooky_emu's watch.sh with the title's update file,
-        # on a Spooky rig slot of the kit's; PAD-1305: tools/bof_emu's with
-        # the title's .fun, the same way
-        launch = padlaunch.launch_for(platform, title, card)
-        name = padlaunch.PLATFORM_NAMES[platform]
-        other = launch.other_run()
-        if other:
-            print("%s is running on the %s rig's slot %s (%s); stop it first"
-                  % (title, name, other.get("slot"), other.get("label") or "the app"))
-            return 1
-        slot = launch.take_slot()
-        env, card_wsl = launch.env()
-        if hidden:
-            env = [e for e in env if not e.startswith("PAD_VISIBLE=")] + ["PAD_VISIBLE=0"]
-        if mute or hidden:
-            env = [e for e in env if not e.startswith("PAD_AUDIO=")] + ["PAD_AUDIO=0"]
-        cmd = launch.head() + env + ["bash", "%s/watch.sh" % launch.rig_wsl, card_wsl]
-        out = open(launch.logfile, "ab")
-        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                         creationflags=_CREATE_NO_WINDOW)
-        print("started %s on the %s rig's slot %d from %s (log %s)" % (title, name, slot, card, launch.logfile))
-        return 0
     launch = padlaunch.Launch(title, card)
     slot = launch.take_slot()
     env = launch.env()
@@ -397,41 +302,7 @@ def run(title, hidden=False, mute=False):
 
 def stop(title):
     from padcontroller import Rig
-    platform = platform_of(title)
     title = padlaunch.game_for(title)
-    if platform == "spike1":
-        import s1bridge
-        rec = s1bridge.board_record(title)
-        if not rec:
-            print("no Spike 1 run of %s on the board" % title)
-            return 1
-        if rec.get("label") != padlaunch.LABEL:
-            print("the Spike 1 run of %s is %s's, not the kit's; leaving it"
-                  % (title, rec.get("label") or "somebody"))
-            return 1
-        launch = padlaunch.Spike1Launch(title, "", dist=rec.get("distro"))
-        launch.work = rec.get("root") or ""
-        launch.stop()
-        print("stopped %s on the Spike 1 rig" % title)
-        return 0
-    if platform in ("spooky", "bof"):
-        import importlib
-        bridge = importlib.import_module("spkbridge" if platform == "spooky" else "bofbridge")
-        name = padlaunch.PLATFORM_NAMES[platform]
-        rec = bridge.board_record(title)
-        if not rec:
-            print("no %s run of %s on the board" % (name, title))
-            return 1
-        if rec.get("label") != padlaunch.LABEL:
-            print("the %s run of %s is %s's, not the kit's; leaving it"
-                  % (name, title, rec.get("label") or "somebody"))
-            return 1
-        cls = padlaunch.SpookyLaunch if platform == "spooky" else padlaunch.BofLaunch
-        launch = cls(title, "", dist=rec.get("distro"))
-        launch.slot = int(rec.get("slot") or 0)
-        launch.stop()
-        print("stopped %s on the %s rig's slot %d" % (title, name, launch.slot))
-        return 0
     rec = Rig.board_run(title)
     if not rec:
         print("no run of %s on the board" % title)
@@ -473,16 +344,8 @@ def status():
         k = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "PAD.Controller\\CLSID")
         print("controller: registered (%s)" % winreg.QueryValue(k, None))
     except Exception:                                       # noqa: BLE001
-        print("controller: NOT registered (padvpx register)")
+        print("controller: open the SPIKE 2 VPX Setup window to register it")
     return 0
-
-
-def _register(cmd):
-    import padcontroller
-    d = padlaunch.kit_load()
-    d["rig"] = RIG
-    padlaunch.kit_save(d)
-    return padcontroller.main(["--" + cmd])
 
 
 def main(argv):
@@ -519,19 +382,6 @@ def main(argv):
         for t, c in sorted((padlaunch.kit_load().get("cards") or {}).items()):
             print("%-18s %s" % (t, c))
         return 0
-    if cmd == "setup" and len(rest) == 2:
-        # one step for a shared table: the controller registered, the table
-        # patched beside itself, the title's card recorded
-        d = padlaunch.kit_load()
-        d["rig"] = RIG
-        padlaunch.kit_save(d)
-        try:
-            import winreg
-            winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "PAD.Controller\\CLSID")
-        except Exception:                                   # noqa: BLE001
-            import padcontroller
-            padcontroller.main(["--register"])
-        return patch(rest[0], None, rest[1])
     if cmd == "player":
         # Visual Pinball's own playfield window: borderless in windowed
         # mode, so it cannot be dragged, and 10.8 ignores WindowPosX/Y in
@@ -559,24 +409,6 @@ def main(argv):
         print("player window: %s, frame %s (applied when a table is next opened; a width scales"
               " the picture, its height follows the table's proportions)"
               % (json.dumps(d.get("player", "off")), "on" if d.get("player_frame") else "off"))
-        return 0
-    if cmd == "playfield":
-        # the rig's own virtual playfield window beside Visual Pinball:
-        # `padvpx playfield on` (upper middle), `monitor 2`, `x y w h`, `off`
-        d = padlaunch.kit_load()
-        if rest and rest[0] == "monitor" and len(rest) == 2:
-            d["playfield"] = {"monitor": int(rest[1])}
-        elif len(rest) == 4:
-            d["playfield"] = {"x": int(rest[0]), "y": int(rest[1]), "w": int(rest[2]), "h": int(rest[3])}
-        elif rest and rest[0] == "on":
-            d["playfield"] = {"on": True}
-        elif rest and rest[0] == "off":
-            d.pop("playfield", None)
-        else:
-            print(json.dumps(d.get("playfield", {}), indent=1) or "off")
-            return 0
-        padlaunch.kit_save(d)
-        print("playfield: %s" % json.dumps(d.get("playfield", "off")))
         return 0
     if cmd == "cache":
         # PAD-964: `padvpx cache` says whether a game copies its card into
@@ -642,42 +474,12 @@ def main(argv):
         padlaunch.kit_save(d)
         print("library: %s" % d["library"])
         return 0
-    if cmd in ("register", "unregister"):
-        log = rest[rest.index("--log") + 1] if "--log" in rest[:-1] else None
-        if log is None:
-            return _register(cmd)
-        # PAD-1229: the tab's Register runs this elevated, where its output
-        # has nowhere to go; it said "was the administrator prompt declined?"
-        # whatever went wrong.  --log keeps what happened for the tab to say.
-        import contextlib
-        import traceback
-        with open(log, "w", encoding="utf-8", errors="replace") as f, \
-                contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-            try:
-                rc = _register(cmd)
-            except BaseException as exc:                    # noqa: BLE001
-                traceback.print_exc()
-                rc = exc.code if isinstance(exc, SystemExit) and isinstance(exc.code, int) else 1
-            print("exit %s" % rc)
-        return rc
     if cmd == "run" and rest:
         return run(rest[0], hidden="--hidden" in rest, mute="--mute" in rest)
     if cmd == "stop" and rest:
         return stop(rest[0])
     if cmd == "status":
         return status()
-    if cmd == "checklist" and rest:
-        import vpxauthor
-        return vpxauthor.main(["checklist"] + rest)
-    if cmd == "probe" and rest:
-        import vpxprobe
-        return vpxprobe.main(rest)
-    if cmd in ("match-leds", "stubs") and rest:
-        import vpxstubs
-        return vpxstubs.main([cmd] + rest)
-    if cmd == "titles":
-        import vpxauthor
-        return vpxauthor.main(["titles"])
     if cmd == "tables":
         for t, i in maps().items():
             print("%-18s %-7s %-40s %s" % (t, i["kind"], i["output"], ", ".join(i["detect"])))

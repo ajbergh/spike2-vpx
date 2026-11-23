@@ -98,8 +98,6 @@ static void (*p_glUniform4fv)(int,int,const float*);
 static void (*p_glUniformMatrix4fv)(int,int,unsigned char,const float*);
 static void (*p_glGenFramebuffers)(int,unsigned*);
 static void (*p_glBindFramebuffer)(unsigned,unsigned);
-/* PAD-1090: PADGL_PRESENTTEX, Spike 3's frame boundary, blits a texture */
-static void (*p_glBlitFramebuffer)(int,int,int,int,int,int,int,int,unsigned,unsigned);
 static void (*p_glFramebufferTexture2D)(unsigned,unsigned,unsigned,unsigned,int);
 static unsigned (*p_glCheckFramebufferStatus)(unsigned);
 static void (*p_glDrawArrays)(unsigned,int,int);
@@ -143,7 +141,6 @@ static void load_gl(void)
     LOAD(glUniform2f); LOAD(glUniform3f); LOAD(glUniform4f); LOAD(glUniform4fv);
     LOAD(glUniformMatrix4fv); LOAD(glGenFramebuffers); LOAD(glBindFramebuffer);
     LOAD(glFramebufferTexture2D); LOAD(glCheckFramebufferStatus);
-    LOAD(glBlitFramebuffer);
     LOAD(glDrawArrays); LOAD(glDrawElements); LOAD(glReadPixels);
     LOAD(glFinish); LOAD(glGetError); LOAD(glGetIntegerv);
     LOAD(glGetVertexAttribiv); LOAD(glGetAttribLocation);
@@ -213,64 +210,6 @@ static int attr_resolve(unsigned tok)
     slot = tok % PADGL_ATTR_PER_PROG;
     if (g >= MAXPROG || slot >= PADGL_ATTR_PER_PROG) return -1;
     return attr_loc[g][slot];
-}
-
-/* ---- PAD-1090, Spike 3: the GLES 3 calls Godot 4 uses (padgl.h, the ops
- * after PADGL_PRESENTTEX). Loaded on first use, so a Spike 2 run that never
- * sends them never looks them up. */
-static void (*p_glDrawArraysInstanced)(unsigned,int,int,int);
-static void (*p_glDrawElementsInstanced)(unsigned,int,unsigned,const void*,int);
-static void (*p_glVertexAttribDivisor)(unsigned,unsigned);
-static void (*p_glVertexAttribIPointer)(unsigned,int,unsigned,int,const void*);
-static void (*p_glVertexAttrib4f)(unsigned,float,float,float,float);
-static void (*p_glVertexAttribI4ui)(unsigned,unsigned,unsigned,unsigned,unsigned);
-static unsigned (*p_glGetUniformBlockIndex)(unsigned,const char*);
-static void (*p_glUniformBlockBinding)(unsigned,unsigned,unsigned);
-static void (*p_glBindBufferBase)(unsigned,unsigned,unsigned);
-static void (*p_glBindBufferRange)(unsigned,unsigned,unsigned,long,long);
-static void (*p_glUniformNf[4])(int,int,const float*);
-static void (*p_glUniformNi[4])(int,int,const int*);
-static void (*p_glUniformNui[4])(int,int,const unsigned*);
-static void (*p_glUniformMN[3])(int,int,unsigned char,const float*);
-static void (*p_glDepthMask)(unsigned char);
-static void (*p_glCullFace)(unsigned);
-static void (*p_glFrontFace)(unsigned);
-static void (*p_glDepthFunc)(unsigned);
-static void (*p_glClearDepthf)(float);
-static void (*p_glBlendColor)(float,float,float,float);
-static void (*p_glTexImage3D)(unsigned,int,int,int,int,int,int,unsigned,unsigned,const void*);
-static void (*p_glTexSubImage3D)(unsigned,int,int,int,int,int,int,int,unsigned,unsigned,const void*);
-static void (*p_glGenerateMipmap)(unsigned);
-static void (*p_glTexStorage2D)(unsigned,int,unsigned,int,int);
-static int s3gl_loaded;
-
-static void s3gl_load(void)
-{
-    static const char *nf[4] = { "glUniform1fv", "glUniform2fv", "glUniform3fv", "glUniform4fv" };
-    static const char *ni[4] = { "glUniform1iv", "glUniform2iv", "glUniform3iv", "glUniform4iv" };
-    static const char *nu[4] = { "glUniform1uiv", "glUniform2uiv", "glUniform3uiv", "glUniform4uiv" };
-    static const char *nm[3] = { "glUniformMatrix2fv", "glUniformMatrix3fv", "glUniformMatrix4fv" };
-    int i;
-    if (s3gl_loaded) return;
-    s3gl_loaded = 1;
-#define LOAD3(n) (*(void **)&p_##n = (void *)eglGetProcAddress(#n))
-    LOAD3(glDrawArraysInstanced); LOAD3(glDrawElementsInstanced);
-    LOAD3(glVertexAttribDivisor); LOAD3(glVertexAttribIPointer);
-    LOAD3(glVertexAttrib4f); LOAD3(glVertexAttribI4ui);
-    LOAD3(glGetUniformBlockIndex); LOAD3(glUniformBlockBinding);
-    LOAD3(glBindBufferBase); LOAD3(glBindBufferRange);
-    LOAD3(glDepthMask); LOAD3(glCullFace); LOAD3(glFrontFace); LOAD3(glDepthFunc);
-    LOAD3(glClearDepthf); LOAD3(glBlendColor);
-    LOAD3(glTexImage3D); LOAD3(glTexSubImage3D); LOAD3(glGenerateMipmap);
-    LOAD3(glTexStorage2D);
-#undef LOAD3
-    for (i = 0; i < 4; i++) {
-        *(void **)&p_glUniformNf[i] = (void *)eglGetProcAddress(nf[i]);
-        *(void **)&p_glUniformNi[i] = (void *)eglGetProcAddress(ni[i]);
-        *(void **)&p_glUniformNui[i] = (void *)eglGetProcAddress(nu[i]);
-    }
-    for (i = 0; i < 3; i++)
-        *(void **)&p_glUniformMN[i] = (void *)eglGetProcAddress(nm[i]);
 }
 
 static char *shader_src[MAXNAME];
@@ -5080,8 +5019,7 @@ static void pic2_check(void)
     }
 }
 
-/* item 44's first sighting of a second display, shared by PADGL_TARGET
- * (Spike 2) and PADGL_PRESENTTEX's display word (Spike 3, PAD-1199): size
+/* First sighting of a second display via PADGL_TARGET: size
  * its render target and panel from the env, open its window, create the
  * target. Runs once; tgt2_disp says which display index holds the slot. */
 static void disp2_setup(int d)
@@ -5274,7 +5212,7 @@ static void dump_op_histogram(void)
     nm[PADGL_BINDFBO]="BINDFBO"; nm[PADGL_BINDTEX]="BINDTEX";
     nm[PADGL_VERTEXATTRIB]="VERTEXATTRIB"; nm[PADGL_ENABLEATTRIB]="ENABLEATTRIB";
     nm[PADGL_BINDVAO]="BINDVAO"; nm[PADGL_COMPILESHADER]="COMPILESHADER";
-    nm[PADGL_TEXDIRECT]="TEXDIRECT"; nm[PADGL_PRESENTTEX]="PRESENTTEX";
+    nm[PADGL_TEXDIRECT]="TEXDIRECT";
     fprintf(stderr, "[padglhost] ops:");
     for (i = 0; i < PADGL_OP_MAX; i++)
         if (op_count[i]) fprintf(stderr, " %s=%ld", nm[i] ? nm[i] : "?", op_count[i]);
@@ -5767,181 +5705,6 @@ static void dispatch(unsigned op, const unsigned char *pl, unsigned len)
         }
     }
     switch (op) {
-    case PADGL_PRESENTTEX: {    /* PAD-1090, Spike 3: the frame is the guest
-                                 * texture the page-flipped GBM bo stands for
-                                 * (padgl.h). Blit it into the screen fbo,
-                                 * leave the game's own framebuffer bindings
-                                 * as they were, then everything SWAP does. A
-                                 * KMS buffer's row 0 is the TOP of the screen,
-                                 * GL's is the bottom, hence the flip -
-                                 * PAD_S3_FLIPY=0 turns it off. */
-        static unsigned rfbo;
-        static int flipy = -1;
-        int keep_draw = 0, keep_read = 0;
-        unsigned t = u[0] < MAXNAME ? map_tex[u[0]] : 0;
-        int w = (int)u[1], h = (int)u[2];
-        /* PAD-1199: the fourth word is the screen (0 = main). A second screen
-         * (Fallout's Pip-Boy) goes to display 2's own texture and window -
-         * the one PADGL_TARGET opens - instead of taking turns with the
-         * main screen in the main window. */
-        int d = len >= 16 ? (int)u[3] : 0;
-        unsigned dst = fbo_screen;
-        int dw = fb_w, dh = fb_h;
-        if (d) {
-            if (tgt2_disp < 0) disp2_setup(d);
-            dst = fbo_screen2; dw = fb2_w; dh = fb2_h;
-        }
-        if (flipy < 0) { const char *e = getenv("PAD_S3_FLIPY"); flipy = !(e && e[0] == '0'); }
-        if (d && !dst) {
-            /* display 2's target failed (logged when it did): drop its
-             * frames rather than mix them into the main window */
-        } else if (t && p_glBlitFramebuffer && w > 0 && h > 0) {
-            if (!rfbo) p_glGenFramebuffers(1, &rfbo);
-            p_glGetIntegerv(0x8CA6, &keep_draw);       /* DRAW_FRAMEBUFFER_BINDING */
-            p_glGetIntegerv(0x8CAA, &keep_read);       /* READ_FRAMEBUFFER_BINDING */
-            p_glBindFramebuffer(0x8CA8, rfbo);         /* READ_FRAMEBUFFER */
-            p_glFramebufferTexture2D(0x8CA8, 0x8CE0, 0x0DE1, t, 0);
-            p_glBindFramebuffer(0x8CA9, dst);          /* DRAW_FRAMEBUFFER */
-            p_glBlitFramebuffer(0, 0, w, h, 0, flipy ? dh : 0, dw, flipy ? 0 : dh,
-                                0x4000, 0x2601);       /* COLOR, LINEAR */
-            p_glBindFramebuffer(0x8CA8, (unsigned)keep_read);
-            p_glBindFramebuffer(0x8CA9, (unsigned)keep_draw);
-        } else {
-            static int said;
-            if (said++ < 4)
-                fprintf(stderr, "[padglhost] PRESENTTEX: guest texture %u has no host "
-                        "texture (or no glBlitFramebuffer) - frame not shown\n", u[0]);
-        }
-        if (d) { present2(); swap2_total++; }
-        else   { present();  swap_total++;  }
-        hdr->frame_ack++;
-        swap_vidmask = 0; swap_draws = 0;
-        jgl_poll(0, 0);
-        break;
-    }
-    /* ---- PAD-1090, Spike 3: the rest of GLES 3 (padgl.h) ---------------- */
-    case PADGL_DRAWARRAYSINST:
-        s3gl_load();
-        if (p_glDrawArraysInstanced) p_glDrawArraysInstanced(u[0], (int)u[1], (int)u[2], (int)u[3]);
-        break;
-    case PADGL_DRAWELEMSINST:
-        s3gl_load();
-        if (p_glDrawElementsInstanced)
-            p_glDrawElementsInstanced(u[0], (int)u[1], u[2], (const void *)(unsigned long)u[3], (int)u[4]);
-        break;
-    case PADGL_ATTRIBDIVISOR: {
-        int idx = attr_resolve(u[0]);
-        s3gl_load();
-        if (idx >= 0 && p_glVertexAttribDivisor) p_glVertexAttribDivisor((unsigned)idx, u[1]);
-        break;
-    }
-    case PADGL_VERTEXATTRIBI: {
-        int idx = attr_resolve(u[0]);
-        s3gl_load();
-        if (idx >= 0 && p_glVertexAttribIPointer) {
-            if (idx < 16) {
-                if (cur_array_buf) vao_backed[cur_vao_g] |=  (unsigned short)(1u << idx);
-                else               vao_backed[cur_vao_g] &= (unsigned short)~(1u << idx);
-            }
-            p_glVertexAttribIPointer((unsigned)idx, (int)u[1], u[2], (int)u[3],
-                                     (const void *)(unsigned long)u[4]);
-        }
-        break;
-    }
-    case PADGL_VERTEXATTRIBC: {
-        int idx = attr_resolve(u[0]);
-        const float *f = (const float *)(pl + 8);
-        s3gl_load();
-        if (idx < 0 || len < 24) break;
-        if (u[1] == 0 && p_glVertexAttrib4f) p_glVertexAttrib4f((unsigned)idx, f[0], f[1], f[2], f[3]);
-        else if (u[1] == 1 && p_glVertexAttribI4ui) p_glVertexAttribI4ui((unsigned)idx, u[2], u[3], u[4], u[5]);
-        break;
-    }
-    case PADGL_UBOBINDING: {
-        unsigned g = u[0], n = len > 8 ? len - 8 : 0, idx;
-        char name[96];
-        s3gl_load();
-        if (g >= MAXNAME || !map_obj[g] || !p_glGetUniformBlockIndex || !p_glUniformBlockBinding) break;
-        if (n > sizeof name - 1) n = sizeof name - 1;
-        memcpy(name, pl + 8, n); name[n] = 0;
-        idx = p_glGetUniformBlockIndex(map_obj[g], name);
-        if (idx != 0xFFFFFFFFu) p_glUniformBlockBinding(map_obj[g], idx, u[1]);
-        else {
-            static int said;
-            if (said++ < 8) fprintf(stderr, "[padglhost] program %u has no uniform block '%s'\n", g, name);
-        }
-        break;
-    }
-    case PADGL_BINDBUFBASE:
-        s3gl_load();
-        if (p_glBindBufferBase) p_glBindBufferBase(u[0], u[1], u[2] < MAXNAME ? map_buf[u[2]] : 0);
-        break;
-    case PADGL_BINDBUFRANGE:
-        s3gl_load();
-        if (p_glBindBufferRange)
-            p_glBindBufferRange(u[0], u[1], u[2] < MAXNAME ? map_buf[u[2]] : 0, (long)u[3], (long)u[4]);
-        break;
-    case PADGL_UNIFORMN: {
-        unsigned g = u[0], slot = u[1], kind = u[2];
-        int cnt = (int)u[3], loc;
-        const void *d = pl + 16;
-        s3gl_load();
-        if (g >= MAXPROG || slot >= MAXUNI || cnt <= 0) break;
-        loc = uni_loc[g][slot];
-        if (loc < 0) break;
-        if (kind <= PADGL_UN_4FV && p_glUniformNf[kind])
-            p_glUniformNf[kind](loc, cnt, (const float *)d);
-        else if (kind >= PADGL_UN_1IV && kind <= PADGL_UN_4IV && p_glUniformNi[kind - PADGL_UN_1IV])
-            p_glUniformNi[kind - PADGL_UN_1IV](loc, cnt, (const int *)d);
-        else if (kind >= PADGL_UN_1UIV && kind <= PADGL_UN_4UIV && p_glUniformNui[kind - PADGL_UN_1UIV])
-            p_glUniformNui[kind - PADGL_UN_1UIV](loc, cnt, (const unsigned *)d);
-        else if (kind >= PADGL_UN_M2FV && kind <= PADGL_UN_M4FV && p_glUniformMN[kind - PADGL_UN_M2FV])
-            p_glUniformMN[kind - PADGL_UN_M2FV](loc, cnt, 0, (const float *)d);
-        break;
-    }
-    case PADGL_COLORMASK:
-        p_glColorMask((unsigned char)u[0], (unsigned char)u[1], (unsigned char)u[2], (unsigned char)u[3]);
-        break;
-    case PADGL_DEPTHMASK:
-        s3gl_load();
-        if (p_glDepthMask) p_glDepthMask((unsigned char)u[0]);
-        break;
-    case PADGL_PIXELSTORE:      p_glPixelStorei(u[0], (int)u[1]); break;
-    case PADGL_STATE1:
-        s3gl_load();
-        switch (u[0]) {
-        case PADGL_S1_CULLFACE:   if (p_glCullFace)  p_glCullFace(u[1]);  break;
-        case PADGL_S1_FRONTFACE:  if (p_glFrontFace) p_glFrontFace(u[1]); break;
-        case PADGL_S1_DEPTHFUNC:  if (p_glDepthFunc) p_glDepthFunc(u[1]); break;
-        case PADGL_S1_CLEARDEPTH: if (p_glClearDepthf) { float f; memcpy(&f, &u[1], 4); p_glClearDepthf(f); } break;
-        }
-        break;
-    case PADGL_BLENDCOLOR: {
-        const float *f = (const float *)pl;
-        s3gl_load();
-        if (p_glBlendColor && len >= 16) p_glBlendColor(f[0], f[1], f[2], f[3]);
-        break;
-    }
-    case PADGL_TEXIMAGE3D:
-        s3gl_load();
-        if (p_glTexImage3D && len >= 32)
-            p_glTexImage3D(u[0], (int)u[1], (int)u[2], (int)u[3], (int)u[4], (int)u[5], 0,
-                           u[6], u[7], len > 32 ? pl + 32 : 0);
-        break;
-    case PADGL_TEXSUBIMAGE3D:
-        s3gl_load();
-        if (p_glTexSubImage3D && len > 40)
-            p_glTexSubImage3D(u[0], (int)u[1], (int)u[2], (int)u[3], (int)u[4], (int)u[5],
-                              (int)u[6], (int)u[7], u[8], u[9], pl + 40);
-        break;
-    case PADGL_GENMIPMAP:
-        s3gl_load();
-        if (p_glGenerateMipmap) p_glGenerateMipmap(u[0]);
-        break;
-    case PADGL_TEXSTORAGE2D:
-        s3gl_load();
-        if (p_glTexStorage2D) p_glTexStorage2D(u[0], (int)u[1], u[2], (int)u[3], (int)u[4]);
-        break;
     case PADGL_SWAP:            /* item 44: the swap belongs to whichever
                                  * display the ops since the last TARGET drew.
                                  * frame_ack counts BOTH - the guest's

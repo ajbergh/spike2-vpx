@@ -15,7 +15,7 @@ timer tick for what the game did, `Controller.Solenoid(n)` from cvpmMagnet,
 `Run`/`Stop`/`Pause` around the session.
 
 BEHIND IT IS THE RIG, NOT A ROM. The game is the real Spike 2 binary running
-under tools/spike2_emu (watch.sh, or the app's Emulate tab) in WSL. This
+under tools/spike2_emu (watch.sh) in WSL. This
 server attaches to that run through the two shared blocks every other host
 tool uses:
 
@@ -94,11 +94,7 @@ import padpath    # noqa: E402  where the rig is
 import padsw      # noqa: E402  offsets into padsw
 import bootprog   # noqa: E402  how far a Spike 2 boot is, off the run's own log (PAD-963)
 import padlaunch  # noqa: E402  starts a run for a table when none is up
-import s1bridge   # noqa: E402  the Spike 1 rig's files, for a Spike 1 title (PAD-943)
-import spkbridge  # noqa: E402  the Spooky rig's files, for a Spooky title (PAD-952)
-import bofbridge  # noqa: E402  the Barrels of Fun rig's files (PAD-1305)
-import padcabinet  # noqa: E402  a cabinet's backglass and button lights (PAD-1304)
-SLOT_BRIDGES = {"spike1": s1bridge, "spooky": spkbridge, "bof": bofbridge}
+import padcabinet  # noqa: E402
 
 try:
     import pythoncom
@@ -131,15 +127,13 @@ SERVICE = {9008: (0, 8),        # Service Select
            9010: (0, 10),       # Service Minus
            9011: (0, 11)}       # Service Back
 #: PAD-952: a map's cabinet can name the coin door's buttons itself (a
-#: Spooky machine's are MENU ENTER, VOLUME UP / DOWN, MENU BACK: no Stern wire)
 SERVICE_KEYS = {9008: "service_select", 9009: "service_plus", 9010: "service_minus",
                 9011: "service_back"}
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPATCH_PROPERTYPUT = 1, 2, 4
 
-LOG = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp",
-                   "padcontroller.log")
+LOG = padlaunch.LOG
 
 
 # The log is written by one daemon thread, never by the caller: set_switch
@@ -198,7 +192,7 @@ def log(msg):
 # ---------------------------------------------------------------- the map --
 
 #: where the user's own maps go (vpxgen.py writes a generated table's there)
-USER_MAPS = os.path.join(os.path.expanduser("~"), ".pad-vpx", "maps")
+USER_MAPS = padlaunch.USER_MAPS
 
 #: the game's LCD is 16:9 (1360x768 on Spike 2)
 LCD_ASPECT = 16.0 / 9.0
@@ -499,8 +493,7 @@ class VpxMap:
         # a rebuilt table's map (<title>.vpxmap.json) or a shadow-patched
         # tribute's (<title>.shadow.json, vpxshadow.py): same keys where
         # they overlap - solenoids, game_on, cabinet, solenoid_max. The
-        # user's own maps (a generated table's, vpxgen.py) live in
-        # ~/.pad-vpx/maps, since an installed kit's folder is not writable.
+        # Look in the player's writable map folder before the bundled maps.
         self.path = None
         for d in (USER_MAPS, HERE):
             for suffix in (".vpxmap.json", ".shadow.json"):
@@ -516,7 +509,8 @@ class VpxMap:
         m = json.load(open(path, encoding="utf-8"))
         game = m.get("game")
         self.game = game if isinstance(game, str) and game else self.title
-        self.platform = (m.get("platform") or "spike2").lower()
+        if (m.get("platform") or "spike2").lower() != "spike2":
+            return
         g = m.get("game_on") or {}
         self.game_on = (int(g["number"]), [tuple(c) for c in g["coils"]]) if g else None
         self.cabinet = {k: int(v) for k, v in m.get("cabinet", {}).items()
@@ -547,7 +541,7 @@ class VpxMap:
                 self.lamp_groups[lamp_number(*leds[0])] = leds
                 # an insert's R, G and B LEDs; or ONE LED that is all three
                 # (a Spooky or BoF board's, PAD-952 / PAD-1305: its colour is in the slot)
-                if v.get("rgb") and (len(leds) == 3 or (len(leds) == 1 and self.platform in ("spooky", "bof"))):
+                if v.get("rgb") and len(leds) == 3:
                     self.rgb_groups.add(lamp_number(*leds[0]))
                     if isinstance(v["rgb"], str):
                         self.rgb_order[lamp_number(*leds[0])] = v["rgb"]
@@ -662,7 +656,7 @@ def sol_number(node, index):
 
 # ---------------------------------------------------------------- the rig --
 
-BOARD = os.path.join(os.path.expanduser("~"), ".pad-rig")
+BOARD = padlaunch.BOARD
 
 
 class Rig:
@@ -1010,7 +1004,7 @@ def block_in_wsl(rig, runner=None, timeout=20):
 #: what the loading window says when WSL's link to Windows is stuck (PAD-1247)
 WSL_STUCK = ("WSL's link to Windows is stuck: the game runs inside WSL, but the "
              "table cannot reach it and its sound does not come through. "
-             "Close Visual Pinball, press Restart WSL… on PAD's Emulate tab, "
+             "Close Visual Pinball, run wsl --shutdown in Windows Terminal, "
              "then open the table again.")
 
 
@@ -2042,8 +2036,7 @@ class Bridge:
         # outlives the map: tables name their game in Table_Init, after the
         # stubs' top-level code has said its numbers
         self.map.solenoids.update(getattr(self, "own_sols", {}))
-        # PAD-943: a Spike 1 title's switches are slots up to 1023
-        self.max_id = self.rigmod.N_SLOTS if self.slots else padsw.MAX_ID
+        self.max_id = padsw.MAX_ID
         log("game %s: map %s (%s): switches=%d solenoids=%d lamp groups=%d"
             % (title, self.map.path or "NONE", self.map.platform, len(self.map.switch_rewrite),
                len(self.map.solenoids), len(self.map.lamp_groups)))
@@ -2051,21 +2044,6 @@ class Bridge:
     @property
     def native_title(self):
         return getattr(self.map, "game", None) or self.title
-
-    @property
-    def rigmod(self):
-        """The rig module of a platform whose run publishes one block of
-        slots (PAD-943, PAD-952): s1bridge for Spike 1, spkbridge for
-        Spooky; None for Spike 2 (padled / padsw)."""
-        return SLOT_BRIDGES.get(getattr(self.map, "platform", "spike2"))
-
-    @property
-    def slots(self):
-        return self.rigmod is not None
-
-    @property
-    def spike1(self):
-        return getattr(self.map, "platform", "spike2") == "spike1"
 
     def own_solenoid(self, n, coil):
         """`Controller.PadSolenoid(n) = Array(node, index)` (PAD-1303): the
@@ -2088,12 +2066,10 @@ class Bridge:
         return True
 
     def _sol_number(self, node, idx):
-        return self.rigmod.sol_number(node, idx) if self.slots else sol_number(node, idx)
+        return sol_number(node, idx)
 
     def _rig_up(self, data):
         """A fresh read of the run's output block says the game is up."""
-        if self.slots:
-            return self.rigmod.is_up(data)
         return bool(data) and coilmap.has_magic(data)
 
     def dof_init(self, rom, table_file, factory=None):
@@ -2217,7 +2193,7 @@ class Bridge:
         thread attaches when the game is up, and the table plays from then
         on - switches before that are kept and handed over at attach (the
         table's trough, set once at its Init), Visual Pinball never waits."""
-        self.rig = self.rigmod.Rig(self.native_title) if self.slots else Rig(self.native_title)
+        self.rig = Rig(self.native_title)
         self.pipe = None
         self.launch = None
         self.attached = False
@@ -2246,13 +2222,13 @@ class Bridge:
             if not card:
                 raise RuntimeError(
                     "no %s run is up for %s and no card image to start one "
-                    "(looked in %s). Start the game first (the app's Emulate tab, "
-                    "or watch.sh), or record its card: padvpx card %s <image>."
-                    % (padlaunch.PLATFORM_NAMES.get(self.map.platform, self.map.platform),
+                    "(looked in %s). Start it with Play-Spike2Vpx.ps1 or record "
+                    "its card: padvpx card %s <image>."
+                    % ("SPIKE 2",
                        self.title or "this title", padlaunch.card_places(self.title, self.map.platform),
                        self.title))
             self._carry_lcd_layout()
-            self.launch = padlaunch.launch_for(self.map.platform, self.title, card)
+            self.launch = padlaunch.Launch(self.title, card)
             self._loading_start()
             try:
                 slot = self.launch.start()
@@ -2276,8 +2252,6 @@ class Bridge:
         `pipe`: the link a run the share cannot reach came up on (PAD-1437)."""
         if pipe is not None:
             pass
-        elif self.slots:
-            pipe = self.rigmod.Pipe(self.rig)
         elif LINK_ON and sys.platform == "win32" and isinstance(self.rig, Rig):
             pipe = RigLink(self.rig)       # PAD-1306: pushed from WSL, not read over 9p
         else:
@@ -2344,7 +2318,7 @@ class Bridge:
         which step the boot is on, and the run's windows are still handed
         back from (_starting). A rig that keeps no such log is ready now."""
         logdir = ""
-        if not self.slots and self.rig is not None and getattr(self.rig, "slot", None):
+        if self.rig is not None and getattr(self.rig, "slot", None):
             # a slot's logs are beside its root: padslots/<n>/root/dump
             logdir = (self.rig.boot_log_dir() if hasattr(self.rig, "boot_log_dir")
                       else os.path.dirname(os.path.dirname(self.rig.dump)))
@@ -2394,7 +2368,6 @@ class Bridge:
         starts: a minute and more of nothing read as broken. Its own
         process (Tk), so nothing here waits on it; Windows only."""
         self._loading = None
-        self._loading_split = False
         if sys.platform != "win32":
             return
         self._loading_file = os.path.join(os.path.dirname(LOG), "padloading-%s.txt" % (self.title or "game"))
@@ -2413,14 +2386,6 @@ class Bridge:
         took = (padlaunch.kit_load().get("start_s") or {}).get(self.title)
         if took:
             cmd += ["--expect", "%d" % took]
-        if padlaunch.is_bof(self.launch) and padlaunch.split_env():
-            # a BoF game on a cabinet's screens (PAD-1308): padsplit is the
-            # loading screen on each of them, then the game's displays, and
-            # gives Visual Pinball back the focus the game's window takes
-            cmd = [exe, os.path.join(HERE, "padsplit.py"), "--title", self.title or "",
-                   "--status", self._loading_file, "--parent", str(os.getpid()),
-                   "--focus", "vpx", "--log", os.path.join(os.path.dirname(LOG), "padsplit.log")]
-            self._loading_split = True
         try:
             self._loading = subprocess.Popen(cmd, cwd=HERE, creationflags=0x08000000)
             log("loading window up for %s%s" % (self.title, " (%d s last time)" % took if took else ""))
@@ -2446,22 +2411,6 @@ class Bridge:
         except OSError:
             pass
 
-    def _split_end(self):
-        """The table closed: a cabinet split ends (its `stop`, then gone),
-        whether the game was up yet or still starting."""
-        if getattr(self, "_loading_split", False) and getattr(self, "_loading", None):
-            self._loading_end("stop")
-        proc, self._split = getattr(self, "_split", None), None
-        if proc is not None:
-            try:
-                with open(self._loading_file, "w", encoding="utf-8") as f:
-                    f.write("stop")
-            except OSError:
-                pass
-            kill = threading.Timer(2.0, self._loading_kill, (proc,))
-            kill.daemon = True
-            kill.start()
-
     def _loading_end(self, word, took=None):
         """`up` closes it; `failed <why>` shows why, then closes it. The time
         a start took paces the next one's bar."""
@@ -2473,17 +2422,10 @@ class Bridge:
                 f.write(word)
         except OSError as exc:
             log("loading window not told %s: %s" % (word, exc))
-        if getattr(self, "_loading_split", False) and word == "up":
-            # the split's windows ARE the game's screens now: kept until the
-            # table closes (_split_end)
-            self._split = proc
-        else:
-            # and gone for sure: `up` at once, a failure once it has been
-            # read (`stop`: the split closes itself, given two seconds)
-            wait = {"up": 0.0, "stop": 2.0}.get(word, 10.0)
-            kill = threading.Timer(wait, self._loading_kill, (proc,))
-            kill.daemon = True
-            kill.start()
+        wait = {"up": 0.0, "stop": 2.0}.get(word, 10.0)
+        kill = threading.Timer(wait, self._loading_kill, (proc,))
+        kill.daemon = True
+        kill.start()
         if took:
             try:
                 kit = padlaunch.kit_load()
@@ -2497,20 +2439,10 @@ class Bridge:
         is up, so a run this bridge started may be read again) and the
         flipper buttons' coils for a run without the rule plane."""
         self.sw_ids = self.rig.switch_ids(self.native_title)
-        if self.slots:
-            # PAD-943: no rule plane on this rig; a held flipper button is a
-            # held flipper coil, and the map's game_on is always armed (the
-            # Spooky board publishes its flipper coils itself: no ids needed)
-            log("switch table: %d ids (%s: %s)"
-                % (len(self.sw_ids), padlaunch.PLATFORM_NAMES.get(self.map.platform, self.map.platform),
-                   "the board's armed rules fire its coils" if hasattr(self.rigmod, "rules")
-                   else "button coils assumed live"))
-            ver = 0
-        else:
-            ver = struct.unpack_from("<I", data, 4)[0]
-            log("switch table: %d ids; padled version %d%s"
-                % (len(self.sw_ids), ver, "" if ver >= 7 else
-                   " (no coil-rule plane: button coils assumed live)"))
+        ver = struct.unpack_from("<I", data, 4)[0]
+        log("switch table: %d ids; padled version %d%s"
+            % (len(self.sw_ids), ver, "" if ver >= 7 else
+               " (no coil-rule plane: button coils assumed live)"))
         # the flipper buttons' coils, for a run without the rule plane:
         # {coil: the board input of its button}, from the map's cabinet ids
         self._button_coils = {}
@@ -2522,11 +2454,10 @@ class Bridge:
             sid = cab.get(key, 0) - 1000
             if coil and sid in by_id:
                 self._button_coils[coil] = by_id[sid][1]
-        if not self.slots:                 # Spike 2's cabinet and backbox boards
-            try:
-                self._read_cabinet()
-            except Exception as exc:                        # noqa: BLE001
-                log("cabinet lights not read: %s" % exc)
+        try:
+            self._read_cabinet()
+        except Exception as exc:                        # noqa: BLE001
+            log("cabinet lights not read: %s" % exc)
 
     def _read_cabinet(self, tables_dir=None, kit=None):
         """The cabinet's lights on this title's boards and the kit's cabinet
@@ -2589,7 +2520,7 @@ class Bridge:
         return False
 
     def _can_go_unshared(self):
-        return (LINK_ON and sys.platform == "win32" and not self.slots
+        return (LINK_ON and sys.platform == "win32"
                 and isinstance(self.rig, Rig) and bool(self.rig.root) and bool(self.rig.distro))
 
     def _stop_stuck(self, why="the game is up, Windows cannot read it"):
@@ -2673,11 +2604,9 @@ class Bridge:
         if self.launch is None:
             return
         if self.rig is None:
-            rec = (self.rigmod.board_record(self.native_title) if self.slots
-                   else Rig.board_slot(self.launch.slot))
+            rec = Rig.board_slot(self.launch.slot)
             if rec:
-                self.rig = (self.rigmod.Rig(self.native_title, record=rec) if self.slots
-                            else Rig(self.native_title, record=rec))
+                self.rig = Rig(self.native_title, record=rec)
                 log("rig: %s -> %s" % (self.rig.how, self.rig.dump))
         if self.rig is not None:
             data = read_block(self.rig.led_path(), READ_N) if SHARE_ON else None
@@ -2696,7 +2625,7 @@ class Bridge:
                 self._block_said = True
                 # PAD-1247: and as WSL itself reads it, which tells a stuck
                 # WSL-to-Windows link from a game that never opened its block
-                seen = None if self.slots else block_in_wsl(self.rig)
+                seen = block_in_wsl(self.rig)
                 log("the game's output block (%s) is not up %d s after its board record "
                     "came (%s; inside WSL %s)%s"
                     % (self.rig.led_path(), self.BLOCK_LATE_S, block_state(data),
@@ -2730,7 +2659,7 @@ class Bridge:
                 self.front_done, self.front_tries = False, {}
                 self.lcd_placed = False
                 self.lcd_tries = self.lcd_stable = 0
-                retry = padlaunch.launch_for(self.map.platform, self.title, failed.card)
+                retry = padlaunch.Launch(self.title, failed.card)
                 self.launch = retry
                 try:
                     slot = retry.start()
@@ -2782,7 +2711,6 @@ class Bridge:
                     pass
         log("stop after %d polls (%d off the link, %d of them idle, %d failed)"
             % (self.polls, self.link_polls, self.link_idle, self.poll_fail))
-        self._split_end()                        # a BoF game's cabinet screens close with it
         self._loading_end("up")                  # the table closed while the game started
         if self.launch is not None:
             self.launch.stop()           # what this bridge started, it stops
@@ -2803,9 +2731,6 @@ class Bridge:
             return
         if want:
             self._release_buttons()
-        if self.slots:
-            self.pipe.pause()                # says once that this rig has none
-            return
         if want and kit_window_in_front():
             # the player clicked the game's own LCD or playfield window (to
             # move it, to look at it): Visual Pinball pauses, the GAME does
@@ -3357,8 +3282,6 @@ class Bridge:
             self.front_done = True       # after the start, a click on the LCD window is the user's own
 
     def _poll_once(self):
-        if self.slots:
-            return self._poll_once_s1()
         link = self.pipe if hasattr(self.pipe, "blocks") else None
         pushed = None
         if (link is not None and not getattr(self.rig, "share", True)
@@ -3413,100 +3336,6 @@ class Bridge:
                 self._poll_b2s(data)
                 if not (self.dof and self.dof.up):
                     self._poll_b2s_dof(data)
-
-    def _poll_once_s1(self):
-        """The Spike 1 rig's block (s1bridge), or the Spooky board's in the
-        same layout (spkbridge, PAD-952): every lamp's level, every coil
-        on or off as the responder saw it, the switches the game is being
-        told. The map's groups and RGB inserts work as on Spike 2; a lamp
-        with no group is reported under its own 1000+ number."""
-        rm = self.rigmod
-        data = read_block(self.rig.led_path(), rm.STATE_SIZE)
-        parts = rm.unpack(data)
-        if not parts:
-            self.poll_fail += 1
-            return
-        switches, lamps, coils, _ = parts
-        # PAD-1305: a bridge with a rule plane (BoF) says which coils the
-        # board fires itself and on which switch; without one, a held
-        # flipper button is a held flipper coil
-        plane = rm.rules(data) if hasattr(rm, "rules") else None
-        self.polls += 1
-        if not self.sw_ids and self.polls % 250 == 0:      # ~ every 2 s until the walk wrote it
-            self._read_tables(data)
-            if self.sw_ids:
-                log("switch table arrived: %d ids" % len(self.sw_ids))
-        now = time.monotonic()
-        rule_coils = {}
-        with self.lock:
-            self.mrg = switches
-            # Some ROM tables read Lamp(n) as a mechanical position or raw
-            # brightness, rather than the normal 0/1 or RGB insert value.
-            for n, (node, idx) in self.map.raw_lamp_rewrite.items():
-                self._lamp_set(n, rm.lamp_level(lamps, node, idx))
-            for n, leds in self.map.lamp_groups.items():
-                levels = [rm.lamp_level(lamps, nd, ix) for nd, ix in leds]
-                if max(levels) < LAMP_ON:
-                    self._lamp_set(n, 0)
-                elif n in self.map.rgb_groups:
-                    self._lamp_set(n, rgb_value(*(rgb_levels(levels, getattr(self.map, "rgb_order", {}).get(n)) if len(leds) == 3
-                                                  else rm.lamp_rgb(lamps, *leds[0]))))
-                else:
-                    self._lamp_set(n, 1)
-            for node in range(rm.MAX_NODES):
-                for idx in range(rm.MAX_INDEX):
-                    n = lamp_number(node, idx)
-                    if n in self.map.lamp_groups:
-                        continue
-                    self._lamp_set(n, 1 if rm.lamp_level(lamps, node, idx) >= LAMP_ON else 0)
-            for node in range(rm.MAX_NODES):
-                for idx in range(rm.MAX_INDEX):
-                    key = (node, idx)
-                    on = 1 if coils[rm.slot(node, idx)] else 0
-                    if plane is not None:
-                        sid = plane.get(rm.slot(node, idx))
-                        if sid:
-                            # armed: the coil follows its switch from the
-                            # table's own edge (set_switch), let go with it
-                            rule_coils.setdefault(sid, []).append((key, True))
-                            if self.pipe.held.get(sid) if self.pipe else 0:
-                                on = 1
-                        self._coil_set(key, on)
-                        continue
-                    # a flipper button held in this bridge is a held coil
-                    # (no rule plane here: the board's reflex is assumed live)
-                    bit = self._button_coils.get(key)
-                    if bit is not None:
-                        sid = self.sw_ids.get((node, bit))
-                        if sid:
-                            # the board's own coil state says when it lets
-                            # go, so set_switch only turns it on
-                            rule_coils.setdefault(sid, []).append((key, False))
-                        if sid and (self.pipe.held.get(sid) if self.pipe else 0):
-                            on = 1
-                    self._coil_set(key, on)
-            self._rule_coils = rule_coils
-            if self.map.game_on:
-                num, gcoils = self.map.game_on
-                if plane is None:
-                    self._sol_set(num, 1)
-                else:
-                    self._sol_set(num, 1 if any(rm.slot(nd, ix) in plane
-                                                for nd, ix in gcoils) else 0)
-            self._fakes_tick(now)
-            if self.dof and self.dof.up:
-                self._poll_dof_s1(lamps, rm)
-
-    def _poll_dof_s1(self, lamps, rm):
-        m = self.map
-        for n, key in m.dof_sols.items():
-            self._dof_set("S", n, 1 if self.sol_state.get(self._sol_number(*key)) else 0)
-        for n, leds in m.dof_lamps.items():
-            level = max(rm.lamp_level(lamps, nd, ix) for nd, ix in leds)
-            self._dof_set("L", n, 1 if level >= LAMP_ON else 0)
-        for n, leds in m.dof_flashers.items():
-            level = max(rm.lamp_level(lamps, nd, ix) for nd, ix in leds)
-            self._dof_set("S", n, level if level >= LAMP_ON else 0)
 
     @staticmethod
     def _led_level(data, node, idx):

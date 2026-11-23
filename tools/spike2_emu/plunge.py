@@ -67,7 +67,6 @@ import time
 import ballmodel
 import gameinfo
 import padsw
-import s3ballask
 
 padsw.set_source('l')   # who the [sw] log says moved a switch;
                         # PAD_SW_SRC overrides. See padsw.h.
@@ -471,10 +470,6 @@ def do_reset(m):
 
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "plunge"
-    if what in s3ballask.S3_VERBS:          # PAD-1181: a Spike 3 slot's bridge makes them
-        d = s3ballask.spike3_dir()
-        if d:
-            return s3ballask.spike3_ask(d, what)
     m = _open()
     if m is None:
         return 1

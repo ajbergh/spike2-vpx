@@ -11,7 +11,7 @@ import subprocess
 import sys
 from tempfile import NamedTemporaryFile
 
-from pinball_decryptor.core import payloads, runtime, wsl_up
+from spike2_vpx import payloads, runtime, wsl_up
 
 APP = Path(__file__).resolve().parent
 RIG = APP / "tools" / "spike2_emu"
@@ -70,19 +70,11 @@ def elevated(exe, args, timeout):
 
 
 def distro_registration():
-    names = wsl_up.registered_distros()
-    if names is None:
-        raise RuntimeError("Windows did not report its registered WSL distributions.")
-    guid = names.get(DISTRO.casefold())
-    if not guid:
+    record = wsl_up.distribution_record(DISTRO)
+    if record is None:
         return None
-    import winreg
-
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                       rf"Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}") as key:
-        base = winreg.QueryValueEx(key, "BasePath")[0]
-        version = winreg.QueryValueEx(key, "Version")[0]
-    return Path(base.removeprefix("\\\\?\\")), version
+    path, version = record
+    return Path(path), version
 
 
 class Setup:

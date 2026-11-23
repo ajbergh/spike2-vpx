@@ -1,7 +1,0 @@
-/* Play options tab (js/tabs/playopts.js, PAD-1204): the options that keep Insider Connected, one card each. */
-.po-page { gap: 16px; }
-.po-note { flex: none; }
-.po-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; align-items: start; }
-html.bp-1100 .po-grid { grid-template-columns: 1fr; }
-.po-opt .bd { display: flex; flex-direction: column; gap: 10px; }
-.po-does { margin: 0; color: var(--ink-2); line-height: 1.45; }

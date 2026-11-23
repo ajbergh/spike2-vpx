@@ -6,7 +6,7 @@ names its title, and the controller looks for a run of that title on the rig
 board. When there is none, this starts one - no app in the loop:
 
   * the CARD for the title: PAD_VPX_CARD, else the card `padvpx patch --card`
-    (or `padvpx card`) recorded for the title in ~/.pad-vpx.json, else the
+    (or `padvpx card`) recorded for the title in the app’s vpx.json, else the
     newest `<title>-*.sdcard.raw` in the kit's library directory
     (PAD_VPX_LIBRARY or the kit's `library`);
   * the Linux it runs in: PAD_WSL_DISTRO, else the kit's `distro`, else
@@ -38,25 +38,18 @@ if RIG not in sys.path:
 
 import padpath    # noqa: E402
 
-KIT = os.path.join(os.path.expanduser("~"), ".pad-vpx.json")
-USER_MAPS = os.path.join(os.path.expanduser("~"), ".pad-vpx", "maps")
+DATA_ROOT = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Spike2Vpx")
+KIT = os.path.join(DATA_ROOT, "vpx.json")
+USER_MAPS = os.path.join(DATA_ROOT, "maps")
+LOG = os.path.join(DATA_ROOT, "logs", "play", "controller.log")
+BOARD = os.path.join(DATA_ROOT, "rig-board")
 LABEL = "PAD-VPX"
-RUNTIME_DISTRO = "PAD-Runtime"
-LOG = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp",
-                   "padcontroller.log")
-_CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
-#: The board as Windows opens it: the one the app (core/rigslot.py) and the
-#: controller (padcontroller.BOARD) read. Every rig command gets it as
-#: PAD_BOARD, because riglock.sh and watch.sh would otherwise guess it from
-#: where the rig is - and an INSTALLED rig, under Program Files, makes them
-#: guess the Linux home's ~/.pad-rig: a board nobody on Windows reads, and one
-#: the app's own runs (root) leave root's, so a plain-user take there found
-#: every slot "in use" while it listed them all free (PAD-803).
-BOARD = os.path.join(os.path.expanduser("~"), ".pad-rig")
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def log(msg):
     try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, "a", encoding="utf-8") as f:
             f.write("%s launch: %s\n" % (time.strftime("%H:%M:%S"), msg))
     except OSError:
@@ -75,6 +68,7 @@ def kit_load():
 
 
 def kit_save(d):
+    os.makedirs(os.path.dirname(KIT), exist_ok=True)
     tmp = KIT + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(d, f, indent=2, sort_keys=True)
@@ -176,23 +170,7 @@ def _version_key(path):
     return tuple(int(x or 0) for x in m.groups()) if m else (0, 0, 0)
 
 
-#: what a title's map says it runs on (`platform`), and the rig that is
-PLATFORM_NAMES = {"spike2": "Spike 2", "spike1": "Spike 1", "spooky": "Spooky",
-                  "bof": "Barrels of Fun"}
-#: the card images a platform's library holds, by glob after `<title>-`
-CARD_GLOBS = {"spike2": ("*.sdcard.raw",), "spike1": ("*.iso",)}
-#: PAD-952: a Spooky title boots its UPDATE file (tools/spooky_emu prepares
-#: it), named by Spooky, not after the title: the rig's title key -> globs.
-#: PAD-954: Alice Cooper's game-code package, which the same watch.sh hands
-#: to the P-ROC rig (tools/spooky_emu/proc)
-SPOOKY_UPDATES = {"h78": ("code_H78*.pkg",), "um": ("code_UM*.pkg",), "ac": ("ac-gamecode*.pkg",)}
-#: the Spooky titles that run on the P-ROC rig, not the Warden board: their
-#: rig profile is the machine yaml in the prepared build (PAD-954)
-SPOOKY_PROC = {"ac": "config/alice.yaml"}
-#: PAD-1305: a Barrels of Fun title boots its update file (dune.fun; a
-#: Labyrinth one is lab.fun), the rig's title key (its profile) -> globs
-BOF_UPDATES = {"dune": ("dune*.fun",), "winchester": ("winchester*.fun",),
-               "labyrinth": ("lab*.fun", "labyrinth*.fun")}
+RUNTIME_DISTRO = "SPIKE2-VPX"
 
 
 def table_map(title):
@@ -203,7 +181,8 @@ def table_map(title):
                 try:
                     with open(os.path.join(directory, title + suffix), encoding="utf-8") as f:
                         m = json.load(f)
-                    return m if isinstance(m, dict) else {}
+                    if isinstance(m, dict) and (m.get("platform") or "spike2").lower() == "spike2":
+                        return m
                 except (OSError, ValueError):
                     pass
     return {}
@@ -230,9 +209,7 @@ def game_for(title):
 
 
 def card_for(title, platform="spike2"):
-    """The card image to boot for `title`, or None with the places looked.
-    A Spike 1 title's card is its .iso (GOT_LE-1_37.iso), looked for the same
-    way (PAD-943)."""
+    """Find the SPIKE 2 card image for this title."""
     env = os.environ.get("PAD_VPX_CARD")
     if env and os.path.isfile(env):
         return env
@@ -243,16 +220,9 @@ def card_for(title, platform="spike2"):
         if card and os.path.isfile(card):
             return card
     for lib in libraries(platform, kit):
-        # by name in any case, as Windows does: a Spike 1 card is GOT_LE-1_37.iso
-        # for got_le, and Linux/macOS glob tells the cases apart (PAD-951)
-        if platform == "spooky":
-            pats = [g.lower() for g in SPOOKY_UPDATES.get(game, ())]
-        elif platform == "bof":
-            pats = [g.lower() for g in BOF_UPDATES.get(game, ())]
-        else:
-            pats = [("%s-%s" % (game, g)).lower() for g in CARD_GLOBS.get(platform, CARD_GLOBS["spike2"])]
-        found = [os.path.join(lib, n) for n in sorted(os.listdir(lib))
-                 if any(fnmatch.fnmatchcase(n.lower(), p) for p in pats)]
+        pattern = "%s-*.sdcard.raw" % game.lower()
+        found = [os.path.join(lib, name) for name in sorted(os.listdir(lib))
+                 if fnmatch.fnmatchcase(name.lower(), pattern)]
         if found:
             # of one version, the stock Release build over a custom one beside
             # it (turtles_pro-1_59_0.1987-upscaled tied with the Release and
@@ -262,10 +232,7 @@ def card_for(title, platform="spike2"):
 
 
 def libraries(platform="spike2", kit=None):
-    """The card folders a platform's title is looked for in, in order: the
-    environment's, the kit's `libraries[platform]`, the kit's `library`, and
-    for Spike 1 that library's sibling named `spike1` (David's library keeps
-    the platforms side by side: Stern/spike2, Stern/spike1) (PAD-943)."""
+    """Return the configured SPIKE 2 card folders in search order."""
     kit = kit_load() if kit is None else kit
     out = []
     env = os.environ.get("PAD_VPX_LIBRARY")
@@ -277,48 +244,13 @@ def libraries(platform="spike2", kit=None):
     lib = kit.get("library")
     if lib:
         out.append(lib)
-        if platform in ("spooky", "bof"):
-            # PAD-952: the maker's own folder beside Stern's (David's library:
-            # images/Stern/spike2 and images/Spooky; PAD-1305: images/BoF)
-            out.append(os.path.join(os.path.dirname(os.path.dirname(lib.rstrip("\\/"))),
-                                    "Spooky" if platform == "spooky" else "BoF"))
-        elif platform != "spike2":
-            out.append(os.path.join(os.path.dirname(lib.rstrip("\\/")), platform))
     return [d for d in out if os.path.isdir(d)]
-
-
-def is_bof(launch):
-    """Whether a launch runs a Barrels of Fun game (its rig is bof_emu)."""
-    return str(getattr(launch, "rig_wsl", "") or "").rstrip("/").endswith("/bof_emu")
-
-
-def split_env():
-    """A BoF run's environment for the cabinet split (PAD-1308): the shipped
-    borderless window, kept under one of padsplit's part windows; [] when
-    the split is off (or its module can't be read)."""
-    try:
-        import padsplit
-        return padsplit.place_env()
-    except Exception:                                       # noqa: BLE001
-        return []
-
-
-def launch_for(platform, title, card):
-    """The launch for a title's platform: Spike 2's Launch, Spike1Launch or
-    SpookyLaunch."""
-    if platform == "spike1":
-        return Spike1Launch(title, card)
-    if platform == "spooky":
-        return SpookyLaunch(title, card)
-    if platform == "bof":
-        return BofLaunch(title, card)
-    return Launch(title, card)
 
 
 def card_places(title, platform="spike2"):
     kit = kit_load()
     libs = libraries(platform, kit)
-    return ("PAD_VPX_CARD, ~/.pad-vpx.json cards[%s]%s, the librar%s %s"
+    return ("PAD_VPX_CARD, vpx.json cards[%s]%s, the librar%s %s"
             % (title, "" if not (kit.get("cards") or {}).get(title) else " (missing file)",
                "y" if len(libs) < 2 else "ies", ", ".join(libs) if libs else
                os.environ.get("PAD_VPX_LIBRARY") or kit.get("library") or "(none set)"))
@@ -354,16 +286,7 @@ def distro():
 #: What Play and the launcher say when this PC has no Linux to run the game
 #: in. It used to come out as "no rig slot free for <title>: <wsl.exe's own
 #: words>", which read like a game already running (PAD-806).
-NO_LINUX = ("The game cannot start: the emulator runs in WSL, and WSL is not "
-            "installed on this PC yet. Click 'Install Missing' above the app's "
-            "tabs (it asks for one Windows restart), then play again.")
-
-
-#: What the table says when the emulator was never set up on this PC: every
-#: Visual Pinball run is a slot layered over the ordinary rig, which the
-#: Emulate tab's first game builds (PAD-882).
-NO_RIG = ("The game cannot start: the emulator is not set up on this PC yet. "
-          "Start a game once on the app's Emulate tab, then open the table again.")
+NO_LINUX = "Open SPIKE 2 VPX and complete Setup before launching a game."
 
 
 def registered():
@@ -408,7 +331,7 @@ def no_linux(dist=None):
         return NO_LINUX
     if dist and dist.lower() not in [n.lower() for n in names]:
         return ("The game cannot start: the Linux it runs in (%s) is not installed "
-                "on this PC. Set it up on the app's Emulate tab, then play again." % dist)
+                "on this PC. Complete Setup in SPIKE 2 VPX, then play again." % dist)
     return ""
 
 
@@ -440,96 +363,22 @@ def wsl_head(dist=None, root=False):
     return head
 
 
-def _app_module(name, why):
-    """A module of the app's core (`rigdata`, `wsl_disk`), from the app's
-    package beside the kit, or None (logged with `why`) where there is none."""
-    app = os.path.dirname(os.path.dirname(os.path.abspath(rig_dir())))
+def host_drive(dist):
+    """Find the Windows drive backing this distro for the card-cache disk check."""
+    if sys.platform != "win32" or not dist:
+        return ""
+    app = os.path.dirname(os.path.dirname(RIG))
     if app not in sys.path:
         sys.path.append(app)
+    from spike2_vpx.wsl_up import distribution_record
+
     try:
-        import importlib
-        return importlib.import_module("pinball_decryptor.core." + name)
-    except Exception as exc:                                # noqa: BLE001
-        log("no app package beside the rig (%s): %s" % (exc, why))
-        return None
-
-
-def _rigdata(why):
-    """The app's core/rigdata.py, from the app's package beside the kit, or
-    None (logged with `why`) where there is none."""
-    return _app_module("rigdata", why)
-
-
-_HOST_DRIVE = {}
-
-
-def host_drive(dist):
-    """PAD_HOST_DRIVE for a run in `dist`: the Windows drive the distro's
-    ext4.vhdx is on, as WSL mounts it (`/mnt/c`), or "" when it cannot be
-    told. The app's Emulate tab passes it to every run (emulate_core
-    _host_drive_env, PAD-816): inside WSL df reports the virtual disk's size,
-    so without it cardmount.sh once started a 14.7 GB copy onto a C: with a
-    few GB left and the whole distro went read-only. A table's launch never
-    passed it (PAD-964). Asked once; the drive comes from the app's one
-    reader of the registry (core/wsl_disk)."""
-    if sys.platform != "win32":
+        record = distribution_record(dist)
+        letter = os.path.splitdrive(record[0])[0] if record else ""
+        return padpath.to_wsl(letter + "\\", dist).rstrip("/") if letter else ""
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        log("Could not find the distro's host drive: %s" % exc)
         return ""
-    if dist not in _HOST_DRIVE:
-        drive = ""
-        wsl_disk = _app_module("wsl_disk", "no host drive floor")
-        if wsl_disk is not None:
-            try:
-                _name, vhdx = wsl_disk._default_distro_vhdx()
-                letter = os.path.splitdrive(vhdx or "")[0]
-                if re.fullmatch(r"[A-Za-z]:", letter):
-                    drive = padpath.to_wsl(letter + "\\", dist).rstrip("/")
-            except Exception as exc:                        # noqa: BLE001
-                log("host drive not told (%s): the copier checks as before" % exc)
-                drive = ""
-        _HOST_DRIVE[dist] = drive
-    return _HOST_DRIVE[dist]
-
-
-def app_home(dist):
-    """The app's PAD_HOME for a run in `dist`, or "" for the rig's own default.
-
-    The app keeps the Spike 2 rig on its data disk when it runs in its own
-    runtime and that disk exists (emulate_core._rig_env, core/rigdata.py), and
-    attaches the disk again after a WSL restart before a run. A run started
-    here has to land in that same rig - its rootfs, cards and NVRAM - so this
-    asks rigdata the same question, from the app's package beside the kit."""
-    if sys.platform != "win32" or dist != RUNTIME_DISTRO:
-        return ""
-    rigdata = _rigdata("the rig's own PAD_HOME")
-    if rigdata is None or not rigdata.exists():
-        return ""
-    try:
-        rigdata.ensure(dist, log=log)
-    except Exception as exc:                                # noqa: BLE001
-        log("the app's data disk did not attach (%s): the rig's own PAD_HOME" % exc)
-        return ""
-    return rigdata.work_dir("spike2") or ""
-
-
-def card_store(dist):
-    """Attach the shared Spike 2 card store (PAD-651) when this PC has one and
-    a WSL restart left it off, as the app's Emulate tab does before every run.
-    Without it cardmount.sh falls back to the distro's own cache, and when
-    that has no room for the card the game boots off the Windows drive
-    through 9p: Batman 1.14 took 148 s to attract that way, the table sitting
-    on "Startup In Progress" (PAD-963). Never a refusal: the run goes on."""
-    if sys.platform != "win32":
-        return
-    rigdata = _rigdata("no card store")
-    if rigdata is None or not rigdata.cards_exists():
-        return
-    dist = dist or next(iter(distros()), None)
-    if not dist:
-        return
-    try:
-        rigdata.ensure_cards(dist, log=log)
-    except Exception as exc:                                # noqa: BLE001
-        log("the card store did not attach (%s): the card is read where it lies" % exc)
 
 
 _ACCOUNT = {}
@@ -587,8 +436,8 @@ class Launch:
         # it, not the machine's default (PAD-882)
         # Prepared launches need this kit's support for an explicit directory title.
         self.rig_wsl = padpath.to_wsl(RIG if game_dir else rig_dir(), self.distro)
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
         self.logfile = os.path.join(os.path.dirname(LOG), "padvpx-%s.log" % title)
-        self.home = None        # app_home(), asked once
         self.check = None       # cache_check(): what the card costs the disk (PAD-964)
 
     def rig_cmd(self, script, env=()):
@@ -652,15 +501,10 @@ class Launch:
             pass
 
     def board_env(self):
-        """PAD_BOARD (see BOARD) and the app's PAD_HOME (see app_home)."""
-        out = []
+        """Share the Windows rig board with the WSL run."""
         if sys.platform == "win32":
-            out.append("PAD_BOARD=%s" % padpath.to_wsl(BOARD, self.distro))
-        if self.home is None:
-            self.home = app_home(self.distro)
-        if self.home:
-            out.append("PAD_HOME=%s" % self.home)
-        return out
+            return ["PAD_BOARD=%s" % padpath.to_wsl(BOARD, self.distro)]
+        return []
 
     def take_slot(self):
         """A slot of the kit's own: the kit's `slot` when it names one (`use`
@@ -695,21 +539,14 @@ class Launch:
 
     def env(self):
         env = self.board_env() + ["PAD_SLOT=%d" % self.slot, "PAD_LABEL=%s" % self.label,
-                                  "PAD_HIDDEN=0", "PAD_AUDIO=1"]
+                                  "PAD_HIDDEN=0", "PAD_AUDIO=1", "PAD_PLAYFIELD=0"]
         if self.prepared:
-            env += ["PAD_SELECT=0", "PAD_PLAYFIELD=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
+            env += ["PAD_SELECT=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]
             if self.game_dir:
                 return env + ["PAD_GAME_DIR=" + self.game_dir, "PAD_GAME_DIR_TITLE=" + self.title,
                               "PAD_CARD="]
         card = padpath.to_wsl(self.card, self.distro)
-        # visible (the LCD window) and audible, but NO virtual playfield
-        # window: Visual Pinball is the playfield, and the rig's own would
-        # take the keyboard from it the moment it opened
-        # ... unless the kit asked for the playfield window (padvpx playfield)
-        if not self.prepared:
-            playfield = "1" if kit_load().get("playfield") else "0"
-            env.append("PAD_PLAYFIELD=%s" % playfield)
         env.append("PAD_CARD=%s" % card)
         env += self.cache_env()
         py = win_python()
@@ -731,8 +568,7 @@ class Launch:
     def base_rig(self):
         """The ordinary rig every slot is layered over (padpath.sh's
         PAD_BASE_ROOT: $PAD_HOME/spike2root), or "" when it cannot be told."""
-        self.board_env()
-        home = self.home or account(self.distro)[1]
+        _, home = account(self.distro)
         return home + "/spike2root" if home else ""
 
     def start(self):
@@ -740,20 +576,21 @@ class Launch:
         if why:
             log(why)
             raise RuntimeError(why)
-        # PAD-882: on a PC whose Emulate tab never ran a game there is no rig
-        # to layer this run's slot over; the run died a second in with that
-        # said only in its log, and the table sat there. Said here instead,
-        # where the table shows it. `test` answers 1 for "not there"; any
-        # other failure (WSL not answering) refuses nothing.
         base = self.base_rig()
-        if base and _run(wsl_head(self.distro, root=True) + ["-e", "test", "-d", base],
-                         timeout=60).returncode == 1:
-            log("no rig at %s" % base)
-            raise RuntimeError(NO_RIG)
+        if base:
+            card = padpath.to_wsl(self.card, self.distro) if self.card else ""
+            cmd = wsl_head(self.distro) + [
+                "-e", "bash", self.rig_wsl + "/prepare_vpx_root.sh", base, card,
+            ]
+            self.note("[setup] Checking the SPIKE 2 filesystem.")
+            with open(self.logfile, "ab") as out:
+                result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                                        timeout=900, creationflags=_CREATE_NO_WINDOW)
+            if result.returncode:
+                raise RuntimeError("Could not prepare the SPIKE 2 filesystem. See " + self.logfile)
         if self.game_dir:
             self._start_watch()
             return self.slot
-        card_store(self.distro)
         # PAD-964: what the card costs the disk, said in the run's log before
         # anything is copied - the loading window shows it, and a start with
         # no room for the copy (the game reads the image where it lies, 2.5
@@ -798,369 +635,3 @@ class Launch:
             except Exception:                               # noqa: BLE001
                 pass
         self.slot = None
-
-
-# ---------------------------------------------------------------- Spike 1 --
-
-def app_work(dist, rig="spike2"):
-    """app_home() for any rig the app keeps on its data disk: "spike2" is
-    PAD_HOME, "spike1" the S1_WORK that tools/spike1_emu reads (PAD-943)."""
-    if sys.platform != "win32" or dist != RUNTIME_DISTRO:
-        return ""
-    rigdata = _rigdata("the rig's own work dir")
-    if rigdata is None or not rigdata.exists():
-        return ""
-    try:
-        rigdata.ensure(dist, log=log)
-    except Exception as exc:                                # noqa: BLE001
-        log("the app's data disk did not attach (%s): the rig's own work dir" % exc)
-        return ""
-    return rigdata.work_dir(rig) or ""
-
-
-class Spike1Launch:
-    """One Spike 1 run started for a table (PAD-943): tools/spike1_emu's
-    start.sh with the title's card, the way the app's Spike 1 Emulate tab
-    starts one (`wsl -u root`, S1_WORK on the app's data disk when it has
-    one, S1_PIVOT=1 so save states work), visible and with sound, on the
-    app's board. There is ONE Spike 1 rig - no slots - so a run of another
-    title already up is refused rather than replaced, and stop.sh stops
-    what this started.
-
-    The game's DMD is not a window of the rig's own: the app's Spike 1 tab
-    draws it (spike1_windows.py) from the run's spi0.cap, so a player keeps
-    the app open beside Visual Pinball to see it, or configures an optional
-    native viewer in the kit's spike1_dmd_viewers. A viewer this launch
-    starts is stopped with it; an existing app/viewer is left alone."""
-
-    def __init__(self, title, card, dist=None, minutes=240):
-        self.map_title = title
-        self.title = game_for(title)
-        self.card = card
-        self.distro = dist if dist is not None else distro()
-        self.minutes = minutes
-        self.slot = 0
-        self.proc = None
-        self.as_root = True
-        self.rig_wsl = padpath.to_wsl(os.path.join(os.path.dirname(rig_dir()), "spike1_emu"),
-                                      self.distro)
-        self.logfile = os.path.join(os.path.dirname(LOG), "padvpx-%s.log" % title)
-        self.work = None
-        self.dmd_viewer = None
-
-    def work_dir(self):
-        """S1_WORK for this run: the app's data disk, else the rig's default."""
-        if self.work is None:
-            self.work = app_work(self.distro, "spike1") or ""
-        return self.work
-
-    def env(self):
-        card = padpath.to_wsl(self.card, self.distro)
-        env = ["PAD_LABEL=%s" % LABEL, "PAD_HIDDEN=0", "PAD_AUDIO=1", "S1_PIVOT=1"]
-        # a mistyped encoder_lamps loses only that wiring, as the responder
-        # does, never the table's start
-        try:
-            outputs = encoder_lamp_env(table_map(self.map_title).get("encoder_lamps") or {})
-        except (ValueError, TypeError, AttributeError) as exc:
-            log("%s: encoder_lamps ignored (%s)" % (self.map_title, exc))
-            outputs = ""
-        if outputs:
-            env.append("S1_ENCODER_LAMPS=" + outputs)
-        py = win_python()
-        if py:
-            env.append("PAD_WINPYTHON=%s" % padpath.to_wsl(py, self.distro))
-        if sys.platform == "win32":
-            env.append("PAD_BOARD=%s" % padpath.to_wsl(BOARD, self.distro))
-        if self.work_dir():
-            env.append("S1_WORK=%s" % self.work_dir())
-        return env, card
-
-    def head(self):
-        user, home = account(self.distro)
-        head = wsl_head(self.distro, root=True) + ["-e", "env"]
-        if home:
-            head.append("HOME=" + home)
-        return head
-
-    def other_run(self):
-        """The Spike 1 run already up, when it is not this title's."""
-        import s1bridge
-        rec = s1bridge.board_record()
-        if rec and (rec.get("game") or "").lower() != (self.title or "").lower():
-            return rec
-        return None
-
-    def take_slot(self):
-        return 0
-
-    def _start_dmd_viewer(self, output):
-        """An optional native viewer consumes the run's spi0.cap via its
-        board record. Own only the process we launch; no app window or
-        already-running viewer is found or stopped."""
-        if sys.platform != "win32":
-            return
-        viewers = kit_load().get("spike1_dmd_viewers") or {}
-        viewer = viewers.get(self.title) if isinstance(viewers, dict) else None
-        if not viewer:
-            return
-        argv = [viewer] if isinstance(viewer, str) else viewer
-        if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv)
-                or not os.path.isfile(argv[0])):
-            log("Spike 1 DMD viewer for %s not started: %r is not an existing executable path "
-                "or an argument list starting with one" % (self.title, viewer))
-            return
-        try:
-            self.dmd_viewer = subprocess.Popen(
-                argv + [os.path.join(BOARD, "spike1-0.run"), self.title],
-                stdin=subprocess.DEVNULL, stdout=output, stderr=output,
-                creationflags=_CREATE_NO_WINDOW)
-        except OSError as exc:
-            log("Spike 1 DMD viewer for %s failed: %s" % (self.title, exc))
-            return
-        log("started the Spike 1 DMD viewer for %s (pid %d): %s"
-            % (self.title, self.dmd_viewer.pid, " ".join(argv)))
-
-    def _stop_dmd_viewer(self):
-        viewer, self.dmd_viewer = self.dmd_viewer, None
-        if viewer is None or viewer.poll() is not None:
-            return
-        try:
-            viewer.terminate()
-            try:
-                viewer.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                viewer.kill()
-                viewer.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log("Spike 1 DMD viewer stop failed: %s" % exc)
-
-    def start(self):
-        why = no_linux(self.distro)
-        if why:
-            log(why)
-            raise RuntimeError(why)
-        other = self.other_run()
-        if other:
-            raise RuntimeError("the Spike 1 rig is running %s (%s); stop it first - there is one "
-                               "Spike 1 rig" % (other.get("game"), other.get("label") or "the app"))
-        env, card = self.env()
-        cmd = self.head() + env + ["bash", "%s/start.sh" % self.rig_wsl, card]
-        out = open(self.logfile, "ab")
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                                     creationflags=_CREATE_NO_WINDOW)
-        self._start_dmd_viewer(out)
-        log("started %s on the Spike 1 rig from %s (distro %s, log %s)"
-            % (self.title, self.card, self.distro or "default", self.logfile))
-        return 0
-
-    def alive(self):
-        """start.sh returns at READY (the game up) and the run lives on, so a
-        finished start is alive while the board says so."""
-        if self.proc is not None and self.proc.poll() is None:
-            return True
-        import s1bridge
-        return s1bridge.board_record(self.title) is not None
-
-    def stop(self):
-        self._stop_dmd_viewer()
-        try:
-            env = ["S1_WORK=%s" % self.work_dir()] if self.work_dir() else []
-            _run(self.head() + env + ["bash", "%s/stop.sh" % self.rig_wsl], timeout=120)
-            log("stopped %s on the Spike 1 rig" % self.title)
-        except Exception as exc:                            # noqa: BLE001
-            log("stop of the Spike 1 run failed: %s" % exc)
-        if self.proc is not None:
-            try:
-                self.proc.wait(timeout=10)
-            except Exception:                               # noqa: BLE001
-                pass
-        self.proc = None
-
-
-# ----------------------------------------------------------------- Spooky --
-
-class SpookyLaunch(Spike1Launch):
-    """One Spooky run started for a table (PAD-952): tools/spooky_emu's
-    watch.sh with the title's update file (code_H78.pkg), as the app's
-    Spooky Emulate tab starts one (`wsl -u root`), visible and with sound,
-    on a rig slot no other Spooky run holds. The game draws its own screen
-    in its own window; watch.sh returns at attract and the run lives on."""
-
-    #: the Spooky rig's slots the kit takes, the highest first (the app's
-    #: Emulate tab starts at 0)
-    SLOTS = (7, 6, 5, 4)
-
-    def __init__(self, title, card, dist=None, minutes=240):
-        super().__init__(title, card, dist, minutes)
-        self.slot = None
-        self.rig_wsl = padpath.to_wsl(os.path.join(os.path.dirname(rig_dir()), "spooky_emu"),
-                                      self.distro)
-
-    def other_run(self):
-        """A Spooky run of this title already up that is not the kit's: one
-        title runs once (its rig folder is per slot, its saved game is not)."""
-        import spkbridge
-        rec = spkbridge.board_record(self.title)
-        if rec and rec.get("label") != LABEL:
-            return rec
-        return None
-
-    def take_slot(self):
-        import spkbridge
-        for n in self.SLOTS:
-            if spkbridge.board_record(slot=n) is None:
-                self.slot = n
-                return n
-        raise RuntimeError("every Spooky rig slot the kit uses (%s) is running a game; stop one "
-                           "first" % ", ".join(str(n) for n in self.SLOTS))
-
-    def env(self):
-        card = padpath.to_wsl(self.card, self.distro)
-        env = ["PAD_LABEL=%s" % LABEL, "PAD_VISIBLE=1", "PAD_AUDIO=1", "PAD_SLOT=%d" % self.slot]
-        if sys.platform == "win32":
-            env.append("PAD_BOARD=%s" % padpath.to_wsl(BOARD, self.distro))
-        if is_bof(self):
-            env += split_env()
-        return env, card
-
-    def start(self):
-        why = no_linux(self.distro)
-        if why:
-            log(why)
-            raise RuntimeError(why)
-        other = self.other_run()
-        if other:
-            raise RuntimeError("%s is running on the Spooky rig's slot %s (%s); stop it first"
-                               % (other.get("title") or self.title, other.get("slot"),
-                                  other.get("label") or "the app"))
-        if self.slot is None:
-            self.take_slot()
-        env, card = self.env()
-        cmd = self.head() + env + ["bash", "%s/watch.sh" % self.rig_wsl, card]
-        out = open(self.logfile, "ab")
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                                     creationflags=_CREATE_NO_WINDOW)
-        log("started %s on the Spooky rig's slot %d from %s (distro %s, log %s)"
-            % (self.title, self.slot, self.card, self.distro or "default", self.logfile))
-        return self.slot
-
-    def alive(self):
-        if self.proc is not None and self.proc.poll() is None:
-            return True
-        import spkbridge
-        return spkbridge.board_record(self.title, slot=self.slot) is not None
-
-    def stop(self):
-        try:
-            _run(self.head() + ["PAD_SLOT=%d" % (self.slot or 0), "bash", "%s/stop.sh" % self.rig_wsl],
-                 timeout=120)
-            log("stopped %s on the Spooky rig's slot %s" % (self.title, self.slot))
-        except Exception as exc:                            # noqa: BLE001
-            log("stop of the Spooky run failed: %s" % exc)
-        if self.proc is not None:
-            try:
-                self.proc.wait(timeout=10)
-            except Exception:                               # noqa: BLE001
-                pass
-        self.proc = None
-
-
-# ---------------------------------------------------------- Barrels of Fun --
-
-def bof_keys():
-    """`title:passphrase,...` for the BoF rig's watch.sh, from the app's own
-    game table (plugins/bof/games.py beside the kit) - the rig never
-    hard-codes one, and neither does the kit. "" when there is no app."""
-    app = os.path.dirname(os.path.dirname(os.path.abspath(rig_dir())))
-    path = os.path.join(app, "pinball_decryptor", "plugins", "bof", "games.py")
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("pad_bof_games", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        db = mod.GAME_DB
-    except Exception as exc:                                # noqa: BLE001
-        log("no BoF game table beside the kit (%s)" % exc)
-        return ""
-    return ",".join("%s:%s" % (k, v["passphrase"]) for k, v in sorted(db.items())
-                    if v.get("passphrase"))
-
-
-class BofLaunch(SpookyLaunch):
-    """One Barrels of Fun run started for a table (PAD-1305): tools/bof_emu's
-    watch.sh with the title's update file (dune.fun), as the app's BoF
-    Emulate tab starts one (`wsl -u root`, the app's title keys), visible and
-    with sound, on a rig slot no other BoF run holds. The game draws its own
-    screen in its own window; watch.sh returns once the game has found its
-    boards, and the run lives on. The boards always load bofvpx.py, which
-    keeps the files bofbridge reads."""
-
-    def __init__(self, title, card, dist=None, minutes=240):
-        super().__init__(title, card, dist, minutes)
-        self.rig_wsl = padpath.to_wsl(os.path.join(os.path.dirname(rig_dir()), "bof_emu"),
-                                      self.distro)
-
-    def other_run(self):
-        import bofbridge
-        rec = bofbridge.board_record(self.title)
-        if rec and rec.get("label") != LABEL:
-            return rec
-        return None
-
-    def take_slot(self):
-        import bofbridge
-        for n in self.SLOTS:
-            if bofbridge.board_record(slot=n) is None:
-                self.slot = n
-                return n
-        raise RuntimeError("every BoF rig slot the kit uses (%s) is running a game; stop one "
-                           "first" % ", ".join(str(n) for n in self.SLOTS))
-
-    def env(self):
-        env, card = super().env()
-        env.append("BOF_TITLE=%s" % self.title)
-        keys = bof_keys()
-        if keys:
-            env.append("BOF_KEYS=%s" % keys)
-        return env, card
-
-    def start(self):
-        why = no_linux(self.distro)
-        if why:
-            log(why)
-            raise RuntimeError(why)
-        other = self.other_run()
-        if other:
-            raise RuntimeError("%s is running on the BoF rig's slot %s (%s); stop it first"
-                               % (other.get("title") or self.title, other.get("slot"),
-                                  other.get("label") or "the app"))
-        if self.slot is None:
-            self.take_slot()
-        env, card = self.env()
-        cmd = self.head() + env + ["bash", "%s/watch.sh" % self.rig_wsl, card]
-        out = open(self.logfile, "ab")
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
-                                     creationflags=_CREATE_NO_WINDOW)
-        log("started %s on the BoF rig's slot %d from %s (distro %s, log %s)"
-            % (self.title, self.slot, self.card, self.distro or "default", self.logfile))
-        return self.slot
-
-    def alive(self):
-        if self.proc is not None and self.proc.poll() is None:
-            return True
-        import bofbridge
-        return bofbridge.board_record(self.title, slot=self.slot) is not None
-
-    def stop(self):
-        try:
-            _run(self.head() + ["PAD_SLOT=%d" % (self.slot or 0), "bash", "%s/stop.sh" % self.rig_wsl],
-                 timeout=120)
-            log("stopped %s on the BoF rig's slot %s" % (self.title, self.slot))
-        except Exception as exc:                            # noqa: BLE001
-            log("stop of the BoF run failed: %s" % exc)
-        if self.proc is not None:
-            try:
-                self.proc.wait(timeout=10)
-            except Exception:                               # noqa: BLE001
-                pass
-        self.proc = None
