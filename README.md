@@ -176,3 +176,26 @@ skips the card mount and cache. VPX owns the trough and playfield. The
 controller uses the pushed `padlink` transport
 by default. Close VPX to shut down the emulator and release its rig slot.
 Startup failures report the runtime log path when available.
+
+## SPIKE 2 VPX setup preview
+
+Open **SPIKE 2 VPX** from the Start menu after installing the standalone build.
+From a source checkout on Windows x64 with Python and Tcl/Tk, run
+`python Spike2Vpx.pyw`. Install `pywin32`, `olefile`, and `sounddevice` into that
+Python to use the controller, table reader, and Windows audio bridge.
+
+**Set up** checks Windows Subsystem for Linux, WSLg, the private `SPIKE2-VPX`
+distribution, Visual Pinball X, and the bundled `PAD.Controller`. Setup may ask
+for administrator permission. If it reports **Restart required**, restart Windows
+and reopen the app. Use **Get VPX** for the upstream installer and **Choose VPX**
+to select `VPinballX64.exe` when detection misses it. Settings and setup logs are
+under `%LOCALAPPDATA%\Spike2Vpx`. Uninstall leaves the private distribution and
+data in place.
+
+Build the x64 installer with `installer\build_spike2_vpx.ps1`, a full x64
+Python installation with Tcl/Tk, and Inno Setup 6.3 or later. Setup downloads the
+pinned PAD runtime image on first run. On a source checkout, pass
+`-Distro SPIKE2-VPX` and the selected `-VpxExe` to `Play-Spike2Vpx.ps1` to use
+that runtime. The installed launcher picks up the standalone Setup choices.
+The Setup screen checks prerequisites. Image preparation, table preparation,
+and Godzilla LE play verification are later milestones.

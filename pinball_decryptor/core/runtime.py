@@ -438,6 +438,18 @@ def usable(runner=None) -> bool:
     return status(runner=runner)[0] == "ready"
 
 
+def import_image(distro, target, tarball, runner=None):
+    """Import a verified image as WSL2 without replacing an existing distro."""
+    os.makedirs(target, exist_ok=True)
+    _need_room(target, IMPORT_ROOM, "install the emulator's Linux")
+    run = runner or _run
+    out = run(["wsl.exe", "--import", distro, target, tarball, "--version", "2"],
+              timeout=900)
+    if out.returncode != 0:
+        raise RuntimeError("could not import the runtime: %s%s"
+                           % (_why(out), _room_note(target)))
+
+
 def install(log=None, progress=None, runner=None, opener=None,
             source: Optional[str] = None, replace: bool = False) -> str:
     """Download (or take a supplied file), verify, and import as a distro.
@@ -493,19 +505,15 @@ def install(log=None, progress=None, runner=None, opener=None,
                                % _why(out))
 
     target = install_dir()
-    os.makedirs(target, exist_ok=True)
-    _need_room(target, IMPORT_ROOM, "install the emulator's Linux")
     say("Installing the runtime (this takes a moment, once)…")
-    out = run(["wsl.exe", "--import", DISTRO, target, tarball, "--version", "2"],
-              timeout=900)
-    if out.returncode != 0:
-        # _why, not stderr: wsl.exe writes its errors to STDOUT, so a full
-        # disk read "exit 4294967295" here and the reason was lost (PAD-840)
+    try:
+        import_image(DISTRO, target, tarball, run)
+    except RuntimeError as exc:
         raise RuntimeError(
-            "could not import the runtime: %s%s\nIf WSL 2 itself is not "
+            "%s\nIf WSL 2 itself is not "
             "installed: `wsl --install --no-distribution` in an "
             "administrator terminal, then restart."
-            % (_why(out), _room_note(target)))
+            % exc) from exc
 
     invalidate()
     state, detail = status(runner=runner, refresh=True)

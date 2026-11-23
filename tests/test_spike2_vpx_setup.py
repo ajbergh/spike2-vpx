@@ -1,0 +1,110 @@
+from pathlib import Path
+from subprocess import CompletedProcess
+import sys
+from tempfile import TemporaryDirectory
+import unittest
+from unittest.mock import patch
+
+import spike2_vpx_setup as setup
+
+
+def result(code=0, output=b""):
+    return CompletedProcess([], code, output, b"")
+
+
+class StandaloneSetupTest(unittest.TestCase):
+    def setUp(self):
+        folder = TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.app = setup.Setup(folder.name)
+        self.addCleanup(self.app.log.handlers[0].close)
+
+    def test_reboot_survives_relaunch_and_clears_after_a_new_boot(self):
+        with patch.object(setup, "boot_session", return_value="100"), \
+                patch.object(setup, "elevated", return_value=result(3010)):
+            self.app.install_platform("Install")
+            reopened = setup.Setup(self.app.data)
+            self.addCleanup(reopened.log.handlers[0].close)
+            self.assertEqual(reopened.check_wsl().state, "Restart required")
+        with patch.object(setup, "boot_session", return_value="200"), \
+                patch.object(setup, "run", return_value=result()):
+            self.assertEqual(reopened.check_wsl().state, "Ready")
+        self.assertNotIn("restart_boot", reopened.settings_path.read_text())
+
+    def test_wsl_failure_has_a_retry_and_does_not_set_a_restart(self):
+        def checks():
+            return {"wsl": self.app.probe("wsl", self.app.check_wsl)}
+
+        with patch.object(self.app, "checks", side_effect=checks), \
+                patch.object(setup, "boot_session", return_value="100"), \
+                patch.object(setup, "elevated", return_value=result(1)), \
+                patch.object(setup, "run", return_value=result(1)):
+            check = self.app.repair("wsl", "install_wsl")["wsl"]
+        self.assertEqual((check.state, check.action), ("Setup failed", "install_wsl"))
+        self.assertNotIn("restart_boot", self.app.settings)
+        self.assertIn("Elevated WSL command", self.app.log_path.read_text(encoding="utf-8"))
+
+    def test_wslg_requires_session_sockets_for_ready(self):
+        version = result(output="WSL version: 2.6.0\r\nWSLg version: 1.0.71\r\n".encode("utf-16-le"))
+        with patch.object(setup, "run", return_value=version), \
+                patch.object(self.app, "wsl", side_effect=[result(1), result()]) as wsl:
+            self.assertEqual(self.app.check_wslg(setup.Check("Missing", "")).state, "Detected")
+            self.assertEqual(self.app.check_wslg(setup.Check("Ready", "")).state, "Needs attention")
+            self.assertEqual(self.app.check_wslg(setup.Check("Ready", "")).state, "Ready")
+        self.assertIn("PULSE_SERVER", wsl.call_args.args[-1])
+
+    def test_runtime_only_accepts_its_own_full_wsl2_distro(self):
+        with patch.object(setup, "distro_registration", return_value=(Path("another"), 2)), \
+                patch.object(self.app, "wsl") as wsl:
+            self.assertEqual(self.app.check_runtime().state, "Needs attention")
+            wsl.assert_not_called()
+        with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 1)):
+            self.assertIn("--set-version", self.app.check_runtime().detail)
+        manifest = result(output=(
+            f'{{"runtime_version": {setup.runtime.RUNTIME_VERSION}, "variant": "full"}}'.encode()
+        ))
+        with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 2)), \
+                patch.object(self.app, "wsl", side_effect=[manifest, result(output=b"/mnt/c/Program Files"), result()]) as wsl:
+            self.assertEqual(self.app.check_runtime().state, "Ready")
+        self.assertEqual(wsl.call_args.args[-1], "/mnt/c/Program Files")
+
+    def test_missing_runtime_import_uses_verified_file_and_private_storage(self):
+        with patch.object(setup, "distro_registration", return_value=None), \
+                patch.object(setup.payloads, "verify", return_value=(True, "")), \
+                patch.object(setup.runtime, "import_image") as import_image:
+            self.app.install_runtime()
+        distro, target, archive = import_image.call_args.args
+        self.assertEqual(distro, "SPIKE2-VPX")
+        self.assertEqual(Path(target), self.app.runtime_dir)
+        self.assertEqual(Path(archive).parent, self.app.data / "downloads")
+
+    def test_vpx_does_not_read_the_inherited_kit_and_saves_browse_selection(self):
+        with patch.object(setup.vpxsetup, "find_vpx", return_value="") as find:
+            self.assertEqual(self.app.check_vpx().state, "Missing")
+        find.assert_called_once_with(use_kit=False)
+        path = self.app.data / "VPinballX64.exe"
+        path.touch()
+        self.app.choose_vpx(path)
+        with patch.object(setup.vpxsetup, "vpx_version", side_effect=[(10, 7, 4), (10, 8, 0)]):
+            self.assertEqual(self.app.check_vpx().state, "Needs attention")
+            self.assertEqual(self.app.check_vpx().state, "Ready")
+        self.assertIn(path.name, self.app.settings_path.read_text())
+
+    def test_controller_probe_never_offers_to_take_over_another_installation(self):
+        with patch.object(setup, "run", side_effect=[
+            result(output=b'["Needs attention","PAD.Controller belongs to another installation."]'),
+            result(output=b'["Missing","Register the bundled server."]'),
+        ]):
+            self.assertEqual(self.app.check_controller().action, "")
+            self.assertEqual(self.app.check_controller().action, "register_controller")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows registry")
+    def test_controller_mutations_refuse_foreign_machine_registration(self):
+        import standalone_controller as controller
+
+        with patch.object(controller, "registration", return_value="foreign"), \
+                patch.object(controller.padcontroller, "main") as change:
+            with self.assertRaisesRegex(RuntimeError, "another installation"):
+                controller.change("register")
+            controller.change("unregister")
+            change.assert_not_called()

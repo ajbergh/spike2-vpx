@@ -11,9 +11,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$localPython = Join-Path $PSScriptRoot 'python/python.exe'
+$hasLocalPython = Test-Path -LiteralPath $localPython -PathType Leaf
 if (-not $Python) {
     $bundledPython = Join-Path $env:ProgramFiles 'Pinball Asset Decryptor/python/python.exe'
-    $Python = if (Test-Path -LiteralPath $bundledPython -PathType Leaf) { $bundledPython } else { 'python.exe' }
+    $Python = if ($hasLocalPython) { $localPython }
+              elseif (Test-Path -LiteralPath $bundledPython -PathType Leaf) { $bundledPython }
+              else { 'python.exe' }
+}
+if ($hasLocalPython -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Spike2Vpx.pyw'))) {
+    if (-not $Distro -and -not $env:PAD_WSL_DISTRO) { $Distro = 'SPIKE2-VPX' }
+    if (-not $VpxExe) {
+        $settings = Join-Path $env:LOCALAPPDATA 'Spike2Vpx/setup.json'
+        if (Test-Path -LiteralPath $settings -PathType Leaf) {
+            try { $VpxExe = (Get-Content -LiteralPath $settings -Raw -Encoding UTF8 | ConvertFrom-Json).vpx_exe }
+            catch { Write-Verbose 'Setup settings could not be read. Searching for Visual Pinball X.' }
+        }
+    }
 }
 $launcher = Join-Path $PSScriptRoot 'tools/spike2_emu/vpx/play_spike2.py'
 $launchArgs = @('--table', $Table, '--startup-timeout', $StartupTimeout)

@@ -47,8 +47,6 @@ import shutil
 import struct
 import sys
 
-import olefile
-
 TABLE_KEY = b"Visual Pinball"
 INFO_HASHED = ("TableName", "AuthorName", "TableVersion", "ReleaseDate", "AuthorEmail",
                "AuthorWebSite", "TableBlurb", "TableDescription", "TableRules")
@@ -126,6 +124,8 @@ class VpxTable:
     """Everything the digest needs, plus the items, read once with olefile."""
 
     def __init__(self, path):
+        import olefile
+
         self.path = path
         ole = olefile.OleFileIO(path)
         self.ole = ole

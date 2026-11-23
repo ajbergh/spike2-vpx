@@ -15,7 +15,8 @@ import padlaunch  # noqa: E402
 
 
 def read_title(table):
-    from vpxfile import biff_records, olefile
+    import olefile
+    from vpxfile import biff_records
     from vpxsetup import script_title
 
     # Only the embedded script is needed. Skip the table's other streams.

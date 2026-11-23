@@ -148,8 +148,8 @@ def registration_ok(com_path, server_cmd):
             and bool(exe) and os.path.isfile(exe))
 
 
-def find_vpx():
-    kit = padlaunch.kit_load().get("vpx")
+def find_vpx(use_kit=True):
+    kit = padlaunch.kit_load().get("vpx") if use_kit else None
     for d in [kit, VPX_DEFAULT_DIR, os.path.join(os.environ.get("ProgramFiles", ""), "Visual Pinball"),
               os.path.join(os.path.expanduser("~"), "Visual Pinball")]:
         if d and os.path.isfile(os.path.join(d, "VPinballX64.exe")):
