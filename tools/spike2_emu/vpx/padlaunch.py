@@ -421,10 +421,12 @@ def _text(b):
 class Launch:
     """One run started for a table: a slot, a watch.sh, and the stop for it."""
 
-    def __init__(self, title, card, dist=None, minutes=240, *, game_dir=None, prepared=False):
+    def __init__(self, title, card, dist=None, minutes=240, *, game_dir=None, prepared=False,
+                 audio_control=None):
         self.title = game_for(title)
         self.card = card
         self.game_dir = game_dir
+        self.audio_control = audio_control
         self.prepared = prepared or bool(game_dir)
         self.label = "%s-%d" % (LABEL, os.getpid()) if self.prepared else LABEL
         self.distro = dist if dist is not None else distro()
@@ -540,6 +542,8 @@ class Launch:
     def env(self):
         env = self.board_env() + ["PAD_SLOT=%d" % self.slot, "PAD_LABEL=%s" % self.label,
                                   "PAD_HIDDEN=0", "PAD_AUDIO=1", "PAD_PLAYFIELD=0"]
+        if self.audio_control:
+            env.append("PAD_AUDIO_CTL=" + self.audio_control)
         if self.prepared:
             env += ["PAD_SELECT=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]

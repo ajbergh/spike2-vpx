@@ -38,6 +38,7 @@ does run dry the callback emits silence for that block and says so; it never
 blocks, because blocking inside an audio callback is how you get a glitch in
 every other application on the machine too.
 """
+from array import array
 import json
 import os
 import socket
@@ -175,10 +176,6 @@ def main():
             gain_state["value"] = g
             print(f"[padplay] volume -> {g:.2f}", flush=True)
 
-    if ctl_path and np is None:
-        print("[padplay] numpy not installed; the volume/mute knob is inert "
-              "(pip install numpy to enable it)", flush=True)
-
     buf = bytearray()
     lock = threading.Lock()
     done = threading.Event()
@@ -232,8 +229,11 @@ def main():
             if g <= 0.0:
                 # Mute needs no numpy: a memset beats a multiply either way.
                 outdata[:n] = b"\0" * n
-            elif g >= 1.0 or np is None:
+            elif g >= 1.0:
                 outdata[:n] = chunk
+            elif np is None:
+                samples = array("h", chunk)
+                outdata[:n] = array("h", (int(sample * g) for sample in samples)).tobytes()
             else:
                 # int16 * a fraction in [0, 1] can never overflow int16, so no
                 # clip is needed — this only ever attenuates, per the item

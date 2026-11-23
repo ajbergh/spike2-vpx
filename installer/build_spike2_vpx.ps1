@@ -1,13 +1,27 @@
 # Build with a full x64 python.org installation (including Tcl/Tk) and Inno Setup 6.
 param(
     [string]$Python = "python.exe",
-    [string]$InnoSetupPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    [string]$InnoSetupPath = "",
     [string]$AppVersion = "0.1.0"
 )
 
 $ErrorActionPreference = "Stop"
 $project = Split-Path -Parent $PSScriptRoot
-if (-not (Test-Path -LiteralPath $InnoSetupPath -PathType Leaf)) {
+if (-not $InnoSetupPath) {
+    $InnoSetupPath = (Get-Command ISCC.exe -CommandType Application -ErrorAction SilentlyContinue |
+                     Select-Object -First 1 -ExpandProperty Source)
+}
+if (-not $InnoSetupPath) {
+    foreach ($baseDir in @("${env:ProgramFiles(x86)}", $env:ProgramFiles, "$env:LOCALAPPDATA\Programs")) {
+        if (-not $baseDir) { continue }
+        $candidate = Join-Path $baseDir "Inno Setup 6\ISCC.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $InnoSetupPath = $candidate
+            break
+        }
+    }
+}
+if (-not $InnoSetupPath -or -not (Test-Path -LiteralPath $InnoSetupPath -PathType Leaf)) {
     throw "Set -InnoSetupPath to the Inno Setup 6 ISCC.exe executable."
 }
 $info = & $Python -I -c "import json,platform,sys,tkinter; print(json.dumps([sys.base_prefix,platform.machine(),sys.winver]))"
@@ -36,5 +50,6 @@ $pth = Join-Path $pythonDir ("python" + $version.Replace(".", "") + "._pth")
 & (Join-Path $pythonDir "python.exe") -c "import pythoncom,win32com.client,olefile,sounddevice,tkinter; from Crypto.Hash import MD2; MD2.new(); tkinter.Tcl().eval('info patchlevel')"
 if ($LASTEXITCODE -ne 0) { throw "The standalone Python bundle failed its import check." }
 
-& $InnoSetupPath "/DProjectDir=$project" "/DPythonDir=$pythonDir" "/DAppVersion=$AppVersion" (Join-Path $PSScriptRoot "spike2_vpx.iss")
+$output = Join-Path $PSScriptRoot "Output"
+& $InnoSetupPath "/DProjectDir=$project" "/DPythonDir=$pythonDir" "/DAppVersion=$AppVersion" "/O$output" (Join-Path $PSScriptRoot "spike2_vpx.iss")
 if ($LASTEXITCODE -ne 0) { throw "SPIKE 2 VPX installer compilation failed." }

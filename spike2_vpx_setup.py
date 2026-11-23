@@ -142,8 +142,8 @@ class Setup:
             return self.check_wslg_session()
         return Check("Detected", f"WSLg {match[1]} is installed. Install the runtime to check its session.")
 
-    def wsl(self, *command):
-        return run(["wsl.exe", "-d", DISTRO, "-e", *command], timeout=60)
+    def wsl(self, *command, timeout=60):
+        return run(["wsl.exe", "-d", DISTRO, "-e", *command], timeout=timeout)
 
     def check_runtime(self):
         registered = distro_registration()
@@ -195,12 +195,17 @@ class Setup:
                          "Enable GUI applications in WSL settings, restart WSL, then check again.")
         return Check("Ready", "The SPIKE 2 runtime can see the WSLg display and audio sockets.")
 
-    def check_vpx(self):
+    def vpx_executable(self):
         saved = self.settings.get("vpx_exe")
         folder = Path(saved).parent if isinstance(saved, str) and saved else vpxsetup.find_vpx(use_kit=False)
-        if not folder or not (Path(folder) / "VPinballX64.exe").is_file():
+        return Path(folder) / "VPinballX64.exe" if folder else None
+
+    def check_vpx(self):
+        exe = self.vpx_executable()
+        if exe is None or not exe.is_file():
             return Check("Missing", "Install Visual Pinball X 10.8 or newer (Windows x64), "
                          "then select VPinballX64.exe.")
+        folder = exe.parent
         version = vpxsetup.vpx_version(folder)
         if version is None:
             return Check("Needs attention", "Windows could not read the VPX version. "

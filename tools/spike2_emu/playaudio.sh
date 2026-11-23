@@ -320,6 +320,18 @@ echo "[play] fifo $FIFO  ${RATE} Hz x ${CH} ch s16le -> pulse"
 # far and pulse underruns, which sounds like crackle, not like lateness.
 LAT=${PAD_AUDIO_LATENCY_MS:-40}
 echo "[play] pulse buffer ${LAT} ms"
+gain_filter=()
+if [ -n "${PAD_AUDIO_CTL:-}" ]; then
+    ctl="$PAD_AUDIO_CTL"
+    if is_wsl; then
+        ctl=$(wslpath -u "$ctl" 2>/dev/null || printf '%s' "$ctl")
+    fi
+    gain=$(python3 -c 'import json, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    prefs = json.load(stream)
+print(0 if prefs.get("muted") else max(0., min(1., float(prefs.get("gain", 1.)))))' "$ctl" 2>/dev/null || true)
+    [ -z "$gain" ] || gain_filter=(-af "volume=$gain")
+fi
 
 # The pulse stream name carries the title, so a mixer shows which game is
 # playing - and so teardown's pkill pattern still matches whatever ran.
@@ -333,4 +345,5 @@ echo "[play] pulse buffer ${LAT} ms"
 # still passes `bash -n` because the orphaned last line is valid on its own.
 exec ffmpeg -hide_banner -loglevel error \
      -f s16le -ar "$RATE" -ac "$CH" -i "$FIFO" \
+     "${gain_filter[@]}" \
      -f pulse -buffer_duration "$LAT" "${PAD_GAME:-Spike 2} emulator"

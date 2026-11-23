@@ -27,16 +27,24 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 .\Play-Spike2Vpx.ps1 -Card "C:\Images\godzilla_le.sdcard.raw" -Table "C:\Tables\Godzilla limited edition (PAD).vpx"
 ```
 
-The launcher builds the guest filesystem from the card on its first run. The
-source image is opened read-only. You can override detection with `-VpxExe` or
-select a prepared WSL distribution with `-Distro`. Closing VPX stops the run.
-Setup is the current GUI milestone. Image preparation, table preparation,
-and Play are available through the command-line tools.
+Browse **Supported Tables** to find the table version for your game and open
+its download page where one is listed. In **Games**, choose an image or folder.
+The app identifies the title from the
+card's contents and checks space for the optional cache. Choose a compatible
+VPX table to make a playable copy, or use an existing prepared table. Prepared
+pairings appear in the game library. Select **Play** to start the game and
+open VPX. Closing VPX stops the run and returns to the library.
+
+The runtime builds the guest filesystem from a card on its first run and
+opens the source image read-only. The PowerShell launcher also accepts
+`-VpxExe` and `-Distro` overrides. Manage LCD placement, game volume, and card
+caching in **Settings**.
 
 ## Build and test
 
-Build the installer with `installer\build_spike2_vpx.ps1`, full x64 Python
-with Tcl/Tk, and Inno Setup 6.3 or later. The installer bundles the tools and
+Run `.\scripts\build-windows-installer.ps1` with full x64 Python with Tcl/Tk
+and Inno Setup 6.3 or later. The build writes
+`installer\Output\SPIKE2-VPX-Setup.exe`. The installer bundles the tools and
 Python. The first setup downloads the upstream runtime image and verifies
 its pinned SHA-256. Uninstall preserves the private runtime and player data.
 

@@ -14,19 +14,28 @@ import padcontroller  # noqa: E402
 import padlaunch  # noqa: E402
 
 
-def read_title(table):
+def embedded_script(table):
     import olefile
     from vpxfile import biff_records
-    from vpxsetup import script_title
 
     # Only the embedded script is needed. Skip the table's other streams.
     with olefile.OleFileIO(str(table)) as ole:
         data = ole.openstream("GameStg/GameData").read()
-    script = next((body[4:].decode("utf-8", "replace")
-                   for tag, body, _ in biff_records(data) if tag == "CODE"), "")
+    return next((body[4:].decode("utf-8", "replace")
+                 for tag, body, _ in biff_records(data) if tag == "CODE"), "")
+
+
+def patched_script(script):
+    return any(marker in script.lower() for marker in ("padspike2.vbs", "pad.controller"))
+
+
+def read_title(table, script=None):
+    from vpxsetup import script_title
+
+    if script is None:
+        script = embedded_script(table)
     title = script_title(script)
-    if (not re.fullmatch(r"[A-Za-z0-9_-]+", title)
-            or not any(marker in script.lower() for marker in ("padspike2.vbs", "pad.controller"))):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", title) or not patched_script(script):
         raise ValueError("The table needs an embedded PAD controller script and title.")
     return title
 
@@ -83,17 +92,21 @@ def wait_for_game(launch, timeout):
     raise RuntimeError(f"{problem}. See {launch.logfile}")
 
 
-def play(launch, exe, table, timeout):
+def play(launch, exe, table, timeout, progress=None):
     # COM can discover the run from the board independently of VPX's environment.
     if padcontroller.Rig.board_run(launch.title):
         raise RuntimeError(f"Close the existing {launch.title} rig before starting this table.")
     try:
         launch.start()
+        if progress:
+            progress("Waiting for the Stern game and controller…", False)
         rig = wait_for_game(launch, timeout)
         env = dict(os.environ, PAD_WSL_DISTRO=rig.distro, PAD_ROOT_WSL=rig.root,
                    PAD_SLOT=str(launch.slot), PAD_VPX_LINK="1")
         with subprocess.Popen([str(exe), "-play", str(table)], cwd=exe.parent,
                               env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP) as vpx:
+            if progress:
+                progress("Playing in Visual Pinball X", True)
             while True:
                 try:
                     return vpx.wait()

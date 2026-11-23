@@ -52,6 +52,7 @@ def maps():
             out[title] = {"kind": "shadow" if f.endswith(".shadow.json") else "mashup",
                           "game": game if isinstance(game, str) and game else title,
                           "map": os.path.join(HERE, f), "detect": m.get("detect", []),
+                          "table": m.get("table") or {},
                           "detect_not": m.get("detect_not", []),
                           "output": m.get("output", ""), "model": m.get("model", ""),
                           "preferred": bool(m.get("preferred")),
@@ -73,14 +74,18 @@ def card_title(card):
     return m.group(1).lower() if m else None
 
 
-def fitting(table_path):
+def fitting(table_path, script=None):
     """The titles whose map fits this table, preferred first: every `detect`
     word of the map is in the table's script and none of its `detect_not`
     words is (case does not matter). `detect_not` keeps a map off a later
     mod of its table that has a map of its own (PAD-1491: burger's Munsters
     MOD still names Allknowing2012 and mmunsters, so the 1.05 map would take
     it, and a card for munsters_pro picks that map by name)."""
-    script = vpxfile.VpxTable(table_path).script().lower()
+    if script is None:
+        from play_spike2 import embedded_script
+
+        script = embedded_script(table_path)
+    script = script.lower()
     out = []
     for title, info in maps().items():
         words = [w.lower() for w in info["detect"]]
@@ -116,7 +121,7 @@ def recognise(table_path, title=None, card=None):
     return choose(fitting(table_path), title, card)
 
 
-def patch(table_path, outdir=None, card=None, title=None):
+def patch(table_path, outdir=None, card=None, title=None, log=None):
     fits = fitting(table_path)
     if title and title not in dict(fits):
         print("the map for %s does not fit this table; it fits: %s"
@@ -133,7 +138,7 @@ def patch(table_path, outdir=None, card=None, title=None):
               % (title, " (%s)" % info["model"] if info["model"] else "",
                  " or ".join(others), others[0]))
     outdir = outdir or os.path.dirname(os.path.abspath(table_path))
-    py = sys.executable
+    py = padlaunch.win_python() or sys.executable
     if info["kind"] == "shadow":
         cmd = [py, os.path.join(HERE, "vpxshadow.py"), info["map"], table_path, outdir]
     else:
@@ -141,7 +146,11 @@ def patch(table_path, outdir=None, card=None, title=None):
         if info.get("patcher_takes_map"):
             cmd += ["--map", info["map"]]
     print("recognised %s: %s" % (title, " ".join(info["detect"])))
-    r = subprocess.run(cmd)
+    if log is None:
+        r = subprocess.run(cmd)
+    else:
+        r = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT,
+                           stdin=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
     if r.returncode == 0 and card:
         padlaunch.remember_card(title, os.path.abspath(card))
         print("card for %s: %s" % (title, os.path.abspath(card)))
