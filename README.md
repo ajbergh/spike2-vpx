@@ -12,6 +12,19 @@ functionality. [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pin
 
 No Stern or game code is shipped in this repo.
 
+## Screenshots
+
+![Games tab with a sample Godzilla LE pairing ready to play](assets/screenshots/games.png)
+
+<details>
+<summary>Show setup and cabinet screenshots</summary>
+
+![Setup checklist showing the WSL 2 requirement and virtualization help](assets/screenshots/setup.png)
+
+![Cabinet tab with the playfield, backglass, and LCD assigned to three example screens](assets/screenshots/cabinet.png)
+
+</details>
+
 ## Set up
 
 Open **SPIKE 2 VPX** from the Start menu, or run `python Spike2Vpx.pyw` from a
