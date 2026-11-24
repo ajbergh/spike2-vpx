@@ -48,7 +48,10 @@ controller, the table starts loading as soon as the launcher finds its Stern
 session, while the emulator is still starting.
 
 The runtime builds the guest filesystem from a card on its first run and
-opens the source image read-only. The PowerShell launcher also accepts
+opens the source image read-only. Stern high scores and machine settings are
+saved per title in the app's WSL runtime and reused on later launches. The
+first launch after upgrading imports any existing save data it finds for
+that title in the runtime's rig slots. The PowerShell launcher also accepts
 `-VpxExe` and `-Distro` overrides. Manage game volume and card caching in
 **Settings**.
 

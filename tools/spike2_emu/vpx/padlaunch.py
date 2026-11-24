@@ -553,7 +553,8 @@ class Launch:
                         "PAD_WINDOWS_LCD_FRAME=" + self.lcd_frame_path().name])
         if self.prepared:
             env += ["PAD_SELECT=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
-                    "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]
+                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0",
+                     "PAD_VPX_PERSIST=1"]
             if self.game_dir:
                 return env + ["PAD_GAME_DIR=" + self.game_dir, "PAD_GAME_DIR_TITLE=" + self.title,
                               "PAD_CARD="]

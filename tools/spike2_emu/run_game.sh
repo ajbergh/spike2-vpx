@@ -806,7 +806,13 @@ mount -t tmpfs tmpfs "$R/dev/shm"
 # On the machine /games, /data and /dump are separate partitions and the game
 # checks /proc/mounts for them. Binding each directory onto itself makes it a
 # real mount point without disturbing its contents.
-for m in games data dump; do mount --bind "$R/$m" "$R/$m"; done
+for m in games dump; do mount --bind "$R/$m" "$R/$m"; done
+if [ "${PAD_VPX_PERSIST:-}" = 1 ]; then
+    . "$S/vpx_machine_data.sh"
+    pad_vpx_mount_data "$R/data" "$PAD_HOME" "$GAME" || exit 1
+else
+    mount --bind "$R/data" "$R/data"
+fi
 
 # THE CARD ITSELF, if one was given. The FUSE mount was made outside this
 # namespace and so is inherited; binding its title directory into games/ is what

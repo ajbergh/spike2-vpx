@@ -66,6 +66,7 @@ class PreparedLaunchTest(unittest.TestCase):
         for name in ("PLAYFIELD", "HIDDEN", "BALL_FEED", "TOPPER", "RECORD"):
             self.assertEqual(env["PAD_" + name], "0")
         self.assertEqual(env["PAD_CARD"], "")
+        self.assertEqual(env["PAD_VPX_PERSIST"], "1")
 
     def test_prepared_card_uses_card_mount_without_the_virtual_playfield(self):
         mod = play.padlaunch
@@ -92,6 +93,7 @@ class PreparedLaunchTest(unittest.TestCase):
                          ("1", "1920", "1080"))
         self.assertEqual(env["PAD_PLAYFIELD"], "0")
         self.assertEqual(env["PAD_SELECT"], "0")
+        self.assertEqual(env["PAD_VPX_PERSIST"], "1")
 
     def test_card_prepares_the_guest_filesystem_before_starting_the_rig(self):
         mod = play.padlaunch
