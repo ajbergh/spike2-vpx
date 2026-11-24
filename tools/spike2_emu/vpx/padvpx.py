@@ -121,7 +121,7 @@ def recognise(table_path, title=None, card=None):
     return choose(fitting(table_path), title, card)
 
 
-def patch(table_path, outdir=None, card=None, title=None, log=None):
+def patch(table_path, outdir=None, card=None, title=None, log=None, *, configure_cabinet=True):
     fits = fitting(table_path)
     if title and title not in dict(fits):
         print("the map for %s does not fit this table; it fits: %s"
@@ -160,8 +160,9 @@ def patch(table_path, outdir=None, card=None, title=None, log=None):
         b2s = copy_backglass(table_path, out)
         if b2s:
             print("backglass: %s" % b2s)
-            for line in cabinet_res(out):
-                print(line)
+            if configure_cabinet:
+                for line in cabinet_res(out):
+                    print(line)
         remember_patch(out, table_path, title)
         print("open \"%s\" in Visual Pinball; the game starts with it when its card is known" % out)
     return r.returncode
@@ -223,12 +224,14 @@ def copy_backglass(table_path, out_vpx):
     # would hand one table's backglass to another)
     found = []
     try:
-        tables = [n for n in os.listdir(here) if n.lower().endswith(".vpx")]
+        tables = [n for n in os.listdir(here)
+                  if n.lower().endswith(".vpx") and not n.lower().endswith(" (pad).vpx")]
     except OSError:
         tables = []
     for d in ([here] if len(tables) == 1 else []) + [os.path.join(here, "b2s")]:
         try:
-            found += [os.path.join(d, n) for n in os.listdir(d) if n.lower().endswith(".directb2s")]
+            found += [os.path.join(d, n) for n in os.listdir(d)
+                      if n.lower().endswith(".directb2s") and not n.lower().endswith(" (pad).directb2s")]
         except OSError:
             continue
     if len(found) == 1:
@@ -246,7 +249,8 @@ def vpx_ini_set(keys, section="Player", path=None):
     under `[Section]`), keeping everything else as it is."""
     path = path or vpx_ini_path()
     try:
-        lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+        with open(path, encoding="utf-8-sig", errors="surrogateescape") as file:
+            lines = file.read().split("\n")
     except OSError:
         lines = []
     out, in_sect, seen, done = [], False, set(), False
@@ -276,7 +280,8 @@ def vpx_ini_set(keys, section="Player", path=None):
             if k not in seen:
                 out.append("%s = %s" % (k, v))
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    open(path, "w", encoding="utf-8", newline="\n").write("\n".join(out))
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="\n") as file:
+        file.write("\n".join(out))
     return path
 
 

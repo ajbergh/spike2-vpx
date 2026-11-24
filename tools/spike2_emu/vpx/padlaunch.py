@@ -26,6 +26,7 @@ released); a run the user started another way is left alone.
 import fnmatch
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -427,6 +428,7 @@ class Launch:
         self.card = card
         self.game_dir = game_dir
         self.audio_control = audio_control
+        self.windows_lcd = None
         self.prepared = prepared or bool(game_dir)
         self.label = "%s-%d" % (LABEL, os.getpid()) if self.prepared else LABEL
         self.distro = dist if dist is not None else distro()
@@ -544,6 +546,11 @@ class Launch:
                                   "PAD_HIDDEN=0", "PAD_AUDIO=1", "PAD_PLAYFIELD=0"]
         if self.audio_control:
             env.append("PAD_AUDIO_CTL=" + self.audio_control)
+        if self.windows_lcd:
+            x, y, right, bottom = self.windows_lcd
+            env.extend(["PAD_WINDOWS_LCD=1", "PAD_WINDOWS_LCD_W=%d" % (right - x),
+                        "PAD_WINDOWS_LCD_H=%d" % (bottom - y),
+                        "PAD_WINDOWS_LCD_FRAME=" + self.lcd_frame_path().name])
         if self.prepared:
             env += ["PAD_SELECT=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]
@@ -580,6 +587,14 @@ class Launch:
         if why:
             log(why)
             raise RuntimeError(why)
+        if self.prepared and self.distro == "SPIKE2-VPX":
+            cmd = wsl_head(self.distro, root=True) + ["-e", "bash", self.rig_wsl + "/vpx_arm_exec.sh", "repair"]
+            self.note("[setup] Checking ARM execution in the SPIKE 2 runtime.")
+            with open(self.logfile, "ab") as out:
+                result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                                        timeout=30, creationflags=_CREATE_NO_WINDOW)
+            if result.returncode:
+                raise RuntimeError("WSL could not start the ARM guest. Open Setup and run Repair. See " + self.logfile)
         base = self.base_rig()
         if base:
             card = padpath.to_wsl(self.card, self.distro) if self.card else ""
@@ -610,10 +625,15 @@ class Launch:
             % (self.title, self.slot, self.card, self.distro or "default", self.logfile))
         return self.slot
 
+    def lcd_frame_path(self):
+        return Path(BOARD) / f"lcd-frame-{self.slot}-{self.label}.txt"
+
     def _start_watch(self):
         head, self.as_root = self.head()
         if self.slot is None:
             self.take_slot()
+        if self.windows_lcd:
+            self.lcd_frame_path().unlink(missing_ok=True)
         cmd = head + self.env() + ["bash", "%s/watch.sh" % self.rig_wsl, str(self.minutes)]
         with open(self.logfile, "ab") as out:
             self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
@@ -638,4 +658,9 @@ class Launch:
                 self.proc.wait(timeout=10)
             except Exception:                               # noqa: BLE001
                 pass
+        if self.windows_lcd:
+            try:
+                self.lcd_frame_path().unlink(missing_ok=True)
+            except OSError as exc:
+                log("LCD frame cleanup failed: %s" % exc)
         self.slot = None

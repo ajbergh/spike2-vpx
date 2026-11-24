@@ -20,10 +20,17 @@ DEFAULTS = {
     "lcd": "Automatic fullscreen",
 }
 WINDOWED_LCD = "windowed"
+DISABLED_B2S = "disabled"
 
 
 def screen_key(monitor):
     return monitor.get("device") or "{x},{y}:{w}x{h}".format(**monitor)
+
+
+def screen_name(monitor):
+    number = monitor["n"]
+    native = monitor.get("display_number")
+    return f"Screen {number} (Windows {native})" if native and native != number else f"Screen {number}"
 
 
 def resolve(layout, monitors):
@@ -32,7 +39,7 @@ def resolve(layout, monitors):
     used = set()
     for role, label in ROLES.items():
         key = layout.get(role)
-        if not key or (role == "lcd" and key == WINDOWED_LCD):
+        if not key or (role == "lcd" and key == WINDOWED_LCD) or (role == "backglass" and key == DISABLED_B2S):
             continue
         if key not in screens:
             raise ValueError(f"The saved {label} screen is disconnected. Reconnect it or update Settings.")

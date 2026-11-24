@@ -1,4 +1,5 @@
 from base64 import b64encode
+import json
 import os
 from pathlib import Path
 from subprocess import CompletedProcess, run
@@ -100,26 +101,57 @@ def test_rejects_prepared_table_for_another_edition(player, tmp_path, monkeypatc
     assert not player.library()
 
 
-def test_conversion_preserves_source_and_saves_the_pairing(player, tmp_path, monkeypatch):
+@pytest.mark.parametrize("existing_conversion", [False, True])
+def test_conversion_publishes_beside_source_and_saves_pairing(player, tmp_path, monkeypatch,
+                                                            existing_conversion):
     from spike2_vpx import player as module
 
-    table = tmp_path / "Original.vpx"
+    tables = tmp_path / "VPX tables"
+    tables.mkdir()
+    table = tables / "Original.vpx"
     table.write_bytes(b"original table")
-    patched = 'Controller.GameName = "godzilla_le"\nCreateObject("PAD.Controller")'
+    table.with_suffix(".ini").write_bytes(b"[Player]\n")
+    table.with_suffix(".res").write_bytes(b"custom placement")
+    backglass = tables / "Downloaded backglass.directb2s"
+    backglass.write_bytes(b"backglass")
+    base = tables / "Godzilla limited edition (PAD).vpx"
+    if existing_conversion:
+        base.write_bytes(b"earlier conversion")
+        base.with_suffix(".directb2s").write_bytes(b"earlier backglass")
+    patched = 'Controller.GameName = "godzilla_le"\nLoadVPM "01000000", "PADSPIKE2.vbs", 3.10'
     monkeypatch.setattr(module.play_spike2, "embedded_script",
-                        lambda path: "Godzilla SEGA.VBS" if path == table else patched)
+                        lambda path: "Godzilla SEGA.VBS" if Path(path) == table else patched)
+    monkeypatch.setattr(module.padlaunch, "win_python", lambda: sys.executable)
 
-    def patch(path, *, outdir, title, log):
-        assert path == str(table) and title == "godzilla_le"
-        (Path(outdir) / "Godzilla limited edition (PAD).vpx").write_bytes(b"prepared")
-        return 0
+    def patcher(cmd, **kwargs):
+        assert Path(cmd[2]) == table
+        prepared = Path(cmd[3]) / base.name
+        prepared.write_bytes(b"prepared")
+        prepared.with_suffix(".script.vbs").write_text(patched)
+        return CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(module.padvpx, "patch", patch)
+    monkeypatch.setattr(module.padvpx.subprocess, "run", patcher)
+    cabinet_res = Mock()
+    monkeypatch.setattr(module.padvpx, "cabinet_res", cabinet_res)
     game = player.prepare_table(Game("godzilla_le", "card.raw"), table, Mock())
     player.save(game)
+    prepared = Path(game.table)
+    expected = "Godzilla limited edition 2 (PAD).vpx" if existing_conversion else base.name
+    assert prepared == tables / expected
     assert table.read_bytes() == b"original table"
-    assert Path(game.table).read_bytes() == b"prepared"
-    assert Path(game.table).with_name("PADSPIKE2.vbs").is_file()
+    assert backglass.read_bytes() == prepared.with_suffix(".directb2s").read_bytes() == b"backglass"
+    assert prepared.with_suffix(".ini").read_bytes() == b"[Player]\n"
+    assert prepared.with_suffix(".res").read_bytes() == b"custom placement"
+    assert prepared.with_suffix(".script.vbs").read_text() == patched
+    assert json.loads(prepared.with_suffix(".patch.json").read_text()) == {
+        "source": str(table), "title": "godzilla_le"}
+    assert prepared.read_bytes() == b"prepared"
+    assert prepared.with_name("PADSPIKE2.vbs").is_file()
+    assert not list(tables.glob(".spike2-vpx-*"))
+    cabinet_res.assert_called_once_with(str(prepared))
+    if existing_conversion:
+        assert base.read_bytes() == b"earlier conversion"
+        assert base.with_suffix(".directb2s").read_bytes() == b"earlier backglass"
     reopened = Setup(tmp_path)
     try:
         assert Player(reopened).library() == [game]
@@ -128,6 +160,26 @@ def test_conversion_preserves_source_and_saves_the_pairing(player, tmp_path, mon
         assert Path(game.table).is_file()
     finally:
         reopened.log.handlers[0].close()
+
+
+def test_failed_conversion_leaves_source_folder_intact(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    tables = tmp_path / "Tables"
+    tables.mkdir()
+    table = tables / "Original.vpx"
+    table.write_bytes(b"original table")
+    monkeypatch.setattr(module.play_spike2, "embedded_script", lambda path: "Godzilla SEGA.VBS")
+
+    def fail_patch(path, *, outdir, **kwargs):
+        (Path(outdir) / "PADSPIKE2.vbs").write_bytes(b"partial conversion")
+        return 1
+
+    monkeypatch.setattr(module.padvpx, "patch", fail_patch)
+    with pytest.raises(RuntimeError, match="Table conversion failed"):
+        player.prepare_table(Game("godzilla_le", "card.raw"), table, Mock())
+    assert list(tables.iterdir()) == [table]
+    assert table.read_bytes() == b"original table"
 
 
 def test_play_refuses_a_saved_image_replaced_with_another_title(player, tmp_path, monkeypatch):
@@ -192,6 +244,8 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
         {"n": 3, "x": 0, "y": -720, "w": 1280, "h": 720, "primary": False, "device": "glass",
          "display_number": 4},
     ]
+    assert cabinet.screen_name({"n": 2, "display_number": 3}) == "Screen 2 (Windows 3)"
+    assert cabinet.screen_name({"n": 1, "display_number": 1}) == "Screen 1"
     image, table = tmp_path / "card.raw", tmp_path / "Godzilla (PAD).vpx"
     image.touch()
     table.touch()
@@ -221,6 +275,9 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
     assert table.with_suffix(".res").read_text() == "custom"
     screens[1]["n"], screens[2]["n"] = 3, 2
     assert cabinet.resolve(layout, screens)["lcd"]["n"] == 3
+    disabled = {**layout, "backglass": cabinet.DISABLED_B2S}
+    assert "backglass" not in cabinet.resolve(disabled, screens)
+    assert cabinet.saved_layout({"cabinet_layout": disabled}, screens)["backglass"] == cabinet.DISABLED_B2S
     with pytest.raises(ValueError, match="different screen"):
         cabinet.resolve({"lcd": "play", "playfield": "play"}, screens)
     screens.pop()

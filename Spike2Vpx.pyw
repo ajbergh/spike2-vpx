@@ -490,8 +490,10 @@ class PlayerWindow:
             choices = {cabinet.DEFAULTS[role]: ""}
             if role == "lcd":
                 choices["Windowed"] = cabinet.WINDOWED_LCD
+            if role == "backglass":
+                choices["Disabled"] = cabinet.DISABLED_B2S
             for monitor in self.screens:
-                name = f"Screen {monitor['n']} ({monitor['w']} × {monitor['h']})"
+                name = f"{cabinet.screen_name(monitor)} · {monitor['w']} × {monitor['h']}"
                 if monitor["primary"]:
                     name += " · primary"
                 choices[name] = cabinet.screen_key(monitor)
@@ -506,18 +508,21 @@ class PlayerWindow:
         self.check_layout()
 
     def check_layout(self):
+        layout = self.selected_layout()
         try:
-            roles = cabinet.resolve(self.selected_layout(), self.screens)
+            roles = cabinet.resolve(layout, self.screens)
         except ValueError as exc:
             self.cabinet_hint.configure(text=str(exc))
         else:
             lcd = roles.get("lcd")
             if lcd:
-                text = f"The Stern LCD will run borderless fullscreen on Screen {lcd['n']}."
+                text = f"The Stern LCD will run borderless fullscreen on {cabinet.screen_name(lcd)}."
                 if lcd["primary"] and "playfield" not in roles:
                     text += " It can cover VPX if the playfield is also on that screen."
             else:
                 text = "The Stern LCD will run in a window."
+            if layout.get("backglass") == cabinet.DISABLED_B2S:
+                text += " B2S will stay off on the next launch."
             self.cabinet_hint.configure(text=text)
 
     def load_profile(self):
@@ -549,7 +554,7 @@ class PlayerWindow:
 
     def identify_screens(self):
         self.refresh_screens()
-        self.show_screens([(monitor, f"Screen {monitor['n']}") for monitor in self.screens])
+        self.show_screens([(monitor, cabinet.screen_name(monitor)) for monitor in self.screens])
 
     def test_layout(self):
         self.refresh_screens()

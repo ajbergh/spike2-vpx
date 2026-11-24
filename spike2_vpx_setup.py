@@ -145,6 +145,10 @@ class Setup:
     def wsl(self, *command, timeout=60):
         return run(["wsl.exe", "-d", DISTRO, "-e", *command], timeout=timeout)
 
+    def arm_execution(self, linux_rig, mode):
+        return run(["wsl.exe", "-d", DISTRO, "-u", "root", "-e", "bash",
+                    linux_rig + "/vpx_arm_exec.sh", mode], timeout=30)
+
     def check_runtime(self):
         registered = distro_registration()
         if registered is None:
@@ -175,16 +179,31 @@ class Setup:
                          'command -v "$tool" >/dev/null || { echo "Missing $tool"; exit 1; }; done; '
                          'for file in hwshim.c rootfs.sh playaudio.sh lcdring.py padlink.py padpath.sh; do '
                          'test -r "$1/$file" || { echo "Cannot read $file"; exit 1; }; done; '
-                         'source "$1/padpath.sh"; qemu=$(pad_qemu_arm); '
-                         'tmp=$(mktemp -d); trap \'rm -rf -- "$tmp"\' EXIT; '
-                         'echo "int main(void) { return 0; }" | '
-                         'arm-linux-gnueabihf-gcc -static -x c - -o "$tmp/probe"; '
-                         '"$qemu" "$tmp/probe"; '
                          'python3 -B -c \'import runpy,sys; runpy.run_path(sys.argv[1])\' "$1/padlink.py"',
                          "setup", linux_rig)
         if probe.returncode:
             raise RuntimeError(runtime._why(probe))
-        return Check("Ready", f"{DISTRO} · runtime {runtime.RUNTIME_VERSION} · emulator tools available.")
+        arm = self.arm_execution(linux_rig, "check")
+        if arm.returncode == 10:
+            self.log.info("Restoring ARM execution for %s: %s", DISTRO, runtime._why(arm))
+            arm = self.arm_execution(linux_rig, "repair")
+            if arm.returncode:
+                return Check("Repair needed", f"WSL could not restore ARM execution. {runtime._why(arm)}",
+                             "repair_arm")
+        if arm.returncode:
+            raise RuntimeError(runtime._why(arm))
+        return Check("Ready", f"{DISTRO} · runtime {runtime.RUNTIME_VERSION} · ARM execution verified in a chroot.")
+
+    def repair_arm(self):
+        registered = distro_registration()
+        if registered is None or registered[0].resolve() != self.runtime_dir.resolve() or registered[1] != 2:
+            raise RuntimeError("ARM repair requires this app's SPIKE 2 WSL 2 distribution.")
+        rig = self.wsl("wslpath", "-a", "-u", str(RIG))
+        if rig.returncode:
+            raise RuntimeError(runtime._why(rig))
+        out = self.arm_execution(runtime._text(rig.stdout).strip(), "repair")
+        if out.returncode:
+            raise RuntimeError(runtime._why(out))
 
     def check_wslg_session(self):
         out = self.wsl("sh", "-ec",
@@ -302,6 +321,7 @@ class Setup:
         steps = {"install_wsl": lambda: self.install_platform("Install"),
                  "update_wsl": lambda: self.install_platform("Update"),
                  "install_runtime": self.install_runtime,
+                 "repair_arm": self.repair_arm,
                  "register_controller": lambda: self.controller("register")}
         self.settings.pop("failure", None)
         self.save()

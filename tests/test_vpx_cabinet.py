@@ -445,6 +445,7 @@ End Function
 @pytest.mark.parametrize("pre, want", [
     ("Set Controller = New FakePad", ["name", "run", "handed", "FakeB2S", "taken", "stop"]),
     ("Set Controller = New FakePad : NoB2S = True", ["taken"]),     # no B2S: nothing handed
+    ("Set Controller = New FakePad : ForceOff = 1", ["taken"]),
     ("", ["name", "run", "stop"]),                                   # an older controller: as before
 ])
 def test_padspike2_hands_b2s_to_the_controller(tmp_path, pre, want):

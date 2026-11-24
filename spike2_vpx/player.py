@@ -105,7 +105,6 @@ def folder_images(folder):
 class Player:
     def __init__(self, setup):
         self.setup = setup
-        self.directory = setup.data / "tables"
         self.log_path = setup.log_path.with_name("player.log")
         self.audio_path = setup.data / "audio.json"
 
@@ -326,20 +325,50 @@ class Player:
         title, info = padvpx.choose(matches, title=game.title)
         if not info["output"]:
             raise ValueError("This table map does not name a prepared output file.")
-        self.directory.mkdir(parents=True, exist_ok=True)
         progress(f"Creating a playable copy for {game.name}…", False)
-        with TemporaryDirectory(dir=self.directory) as stage:
+        with TemporaryDirectory(prefix=".spike2-vpx-", dir=table.parent) as stage:
             stage = Path(stage)
             with self.log_path.open("ab") as log:
-                if padvpx.patch(str(table), outdir=str(stage), title=title, log=log):
+                if padvpx.patch(str(table), outdir=str(stage), title=title, log=log,
+                                configure_cabinet=False):
                     raise RuntimeError("Table conversion failed. See the player log for details.")
             prepared = stage / info["output"]
-            if not (stage / "PADSPIKE2.vbs").exists():
-                shutil.copyfile(RIG / "vpx" / "PADSPIKE2.vbs", stage / "PADSPIKE2.vbs")
+            helper = stage / "PADSPIKE2.vbs"
+            if not helper.exists():
+                shutil.copyfile(RIG / "vpx" / helper.name, helper)
             self.compatible(game, prepared, play_spike2.embedded_script(prepared))
-            target = self.directory / f"{game.title}-{uuid4().hex[:12]}"
-            stage.rename(target)
-        return replace(game, table=str(target / prepared.name),
+
+            for suffix in (".ini", ".pov", ".res"):
+                source = table.with_suffix(suffix)
+                if source.is_file():
+                    shutil.copy2(source, prepared.with_suffix(suffix))
+
+            companions = [file for file in stage.iterdir()
+                          if file.name.startswith(prepared.stem + ".") and file != prepared]
+            suffixes = [file.name[len(prepared.stem):] for file in companions]
+            target = table.with_name(prepared.name)
+            copy_number = 2
+            while any(os.path.lexists(target.with_name(target.stem + suffix))
+                      for suffix in (*suffixes, ".vpx", ".ini", ".pov", ".res", ".directb2s", ".vbs")):
+                name = prepared.stem.removesuffix(" (PAD)")
+                target = table.with_name(f"{name} {copy_number} (PAD).vpx")
+                copy_number += 1
+
+            published = []
+            try:
+                for file, suffix in zip(companions, suffixes):
+                    destination = target.with_name(target.stem + suffix)
+                    file.rename(destination)
+                    published.append(destination)
+                helper.replace(table.parent / helper.name)
+                prepared.rename(target)
+            except OSError:
+                for file in published:
+                    file.unlink(missing_ok=True)
+                raise
+        if target.with_suffix(".directb2s").is_file():
+            padvpx.cabinet_res(str(target))
+        return replace(game, table=str(target),
                        table_release=info["table"].get("name") or prepared.stem)
 
     def play(self, game, progress, timeout=180):
@@ -355,11 +384,13 @@ class Player:
         self.compatible(game, table, script)
         title = play_spike2.read_title(table, script)
         monitors = padisplay.monitors()
-        roles = cabinet.resolve(self.layout(monitors), monitors)
+        layout = self.layout(monitors)
+        roles = cabinet.resolve(layout, monitors)
+        disable_b2s = layout.get("backglass") == cabinet.DISABLED_B2S
         sessions.check_available(self.setup, game.title)
         board = self.setup.data / "rig-board"
         if self.setup.settings.get("cabinet_layout") is not None:
-            cabinet.apply(board, roles, monitors, table)
+            cabinet.apply(board, roles, monitors, None if disable_b2s else table)
         else:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
@@ -372,7 +403,8 @@ class Player:
             started = started or playing
             progress(message, playing)
 
-        result = play_spike2.play(launch, exe.resolve(), table, timeout, progress=report, overlap=overlap)
+        result = play_spike2.play(launch, exe.resolve(), table, timeout, progress=report, overlap=overlap,
+                                  disable_b2s=disable_b2s)
         if started:
             try:
                 self.record_played(game)

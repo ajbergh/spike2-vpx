@@ -878,6 +878,7 @@ static int win_on;                       /* PAD_GL_WINDOW=1                  */
 static XDisplay *xdpy;
 static unsigned long xwin, wm_delete;
 static int win_w, win_h;                 /* current drawable size            */
+static int win_lcd_w, win_lcd_h;         /* Windows cabinet target size      */
 /* Set when PAD_GL_WIN_W/H named this run's size, i.e. when the size came
  * from display2.REPORTED_PANELS rather than from the rig's default. The
  * remembered-geometry restore in win_open() is the only thing that asks:
@@ -2368,6 +2369,18 @@ static int bind_for(unsigned long sym)
  * X display, and before eglChooseConfig so the config can be window-capable.
  * Returns 0 and leaves win_on clear if anything fails, so a broken or absent
  * X server degrades to the old headless behaviour instead of killing the run. */
+static void win_lcd_size(void)
+{
+    const char *host = getenv("PAD_WINDOWS_LCD");
+    const char *width = getenv("PAD_WINDOWS_LCD_W");
+    const char *height = getenv("PAD_WINDOWS_LCD_H");
+    int w = width ? atoi(width) : 0, h = height ? atoi(height) : 0;
+    if (host && strcmp(host, "1") == 0 && w >= 160 && h >= 120 && w <= 16384 && h <= 16384) {
+        win_lcd_w = w;
+        win_lcd_h = h;
+    }
+}
+
 static int win_open(void)
 {
     const char *t = getenv("PAD_GL_WINDOW");
@@ -2387,6 +2400,7 @@ static int win_open(void)
     }
     scr  = XDefaultScreen(xdpy);
     win_w = fb_w; win_h = fb_h;
+    win_lcd_size();
     {   /* ★ THE SMALL CABINETS' SCREEN (2026-09-07, corrected 2026-09-08). A
          * Home Edition, a 60th and a The Pin have ONE screen and it is
          * 800x480, not the 1360x768 backbox every other title has - reported
@@ -2424,7 +2438,16 @@ static int win_open(void)
          * The bounds keep a corrupt line from creating a 3x2 or a 30000-wide
          * window; out of bounds falls back to the framebuffer size. */
         int gx = 0, gy = 0, gw = 0, gh = 0, gfw = 0, gfh = 0;
-        game_want_pos = winpos_get("game", &gx, &gy, &gw, &gh, &gfw, &gfh);
+        if (win_lcd_w) {
+            /* WSLg may move its Windows proxy without resizing the X
+             * drawable. Allocate the selected monitor's size before EGL
+             * creates the surface, bypassing remembered window geometry. */
+            win_w = win_lcd_w;
+            win_h = win_lcd_h;
+            game_want_pos = 0;
+        } else {
+            game_want_pos = winpos_get("game", &gx, &gy, &gw, &gh, &gfw, &gfh);
+        }
         game_want_x = gx; game_want_y = gy;
         /* ★ A SIZE REMEMBERED AROUND A DIFFERENT PICTURE IS NOT A PREFERENCE
          * (2026-09-08). This file is written on every run and read back on the
@@ -2753,6 +2776,10 @@ static void win_raise_all(const char *why)
  * the restore (2.5 s after mapping). */
 extern int XSendEvent(XDisplay *, unsigned long, int, long, void *);
 extern int XMoveResizeWindow(XDisplay *, unsigned long, int, int, unsigned, unsigned);
+extern int XResizeWindow(XDisplay *, unsigned long, unsigned, unsigned);
+extern int XQueryTree(XDisplay *, unsigned long, unsigned long *, unsigned long *,
+                      unsigned long **, unsigned int *);
+extern int XFree(void *);
 
 struct disp_set { int set, x, y, w, h, fs, border, rx, ry; };
 static struct disp_set disp_want;
@@ -2847,6 +2874,54 @@ static void disp_set_border(int border)
     disp_cur_border = border;
 }
 
+/* WSLg can place X fullscreen on the primary display even after a move.
+ * The Windows VPX launcher owns geometry on an assigned cabinet monitor. */
+static int disp_windows_fullscreen(struct disp_set d)
+{
+    const char *host = getenv("PAD_WINDOWS_LCD");
+    return d.fs && host && strcmp(host, "1") == 0;
+}
+
+/* WSLg sends the X parent surface, including its shadow, to the Windows
+ * proxy. The X child's offset and its parent's dimensions are the actual
+ * insets. _NET_FRAME_EXTENTS can instead report the nominal decorated frame. */
+static void disp_report_frame(void)
+{
+    const char *board = getenv("PAD_BOARD");
+    const char *file = getenv("PAD_WINDOWS_LCD_FRAME");
+    unsigned long root, parent, *children = NULL, unused;
+    unsigned int count, width, height, parent_w, parent_h, border, depth;
+    int x, y, px, py, insets[4] = {0};
+    static int previous[4] = {-1, -1, -1, -1};
+    char path[4096], tmp[sizeof path + 4];
+    FILE *out;
+    if (!board || !*board || !file || !*file || strchr(file, '/') || strchr(file, '\\'))
+        return;
+    if (!XQueryTree(xdpy, xwin, &root, &parent, &children, &count)) return;
+    if (children) XFree(children);
+    if (parent && parent != root) {
+        if (!XGetGeometry(xdpy, xwin, &unused, &x, &y, &width, &height, &border, &depth) ||
+            !XGetGeometry(xdpy, parent, &unused, &px, &py, &parent_w, &parent_h, &border, &depth))
+            return;
+        insets[0] = x;
+        insets[1] = y;
+        insets[2] = (int)parent_w - (int)width - x;
+        insets[3] = (int)parent_h - (int)height - y;
+    }
+    for (int i = 0; i < 4; i++)
+        if (insets[i] < 0 || insets[i] > 256) return;
+    if (memcmp(previous, insets, sizeof insets) == 0) return;
+    if (snprintf(path, sizeof path, "%s/%s", board, file) >= (int)sizeof path) return;
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    out = fopen(tmp, "w");
+    if (!out) return;
+    int wrote = fprintf(out, "%d %d %d %d\n", insets[0], insets[1], insets[2], insets[3]);
+    if (fclose(out) == 0 && wrote > 0 && rename(tmp, path) == 0)
+        memcpy(previous, insets, sizeof insets);
+    else
+        unlink(tmp);
+}
+
 static void disp_apply(void)
 {
     struct disp_set d = disp_want;
@@ -2858,6 +2933,15 @@ static void disp_apply(void)
         XFlush(xdpy);
         fprintf(stderr, "[padglhost] display: free (no setting)\n");
     } else {
+        if (disp_windows_fullscreen(d)) {
+            if (disp_cur_fs) { disp_fullscreen(xwin, 0); disp_cur_fs = 0; }
+            disp_set_border(0);
+            XFlush(xdpy);
+            disp_fixups = 0;
+            disp_placed = 1;
+            fprintf(stderr, "[padglhost] display: Windows cabinet fullscreen\n");
+            return;
+        }
         int left_fs = disp_cur_fs && !d.fs;
         disp_set_border(d.border);
         if (left_fs) { disp_fullscreen(xwin, 0); disp_cur_fs = 0; }
@@ -2887,8 +2971,8 @@ static void disp_open(unsigned long w)
     disp_want = disp_read();
     if (p && stat(p, &st) == 0) disp_mtim = st.st_mtim;
     if (!disp_want.set) return;
-    disp_border(w, disp_want.border);
-    disp_cur_border = disp_want.border;
+    disp_cur_border = disp_windows_fullscreen(disp_want) ? 0 : disp_want.border;
+    disp_border(w, disp_cur_border);
     disp_placed = 0;             /* placement still owed: disp_poll does it */
     game_want_pos = 0;           /* the setting, not the remembered spot */
 }
@@ -2923,6 +3007,7 @@ static void disp_press(int x, int y, int xr, int yr, unsigned long t);
 
 static void disp_button(int x, int y, int xr, int yr)
 {
+    if (disp_windows_fullscreen(disp_want)) return;
     double t = now_s();
     if (t - disp_last_click_s < DISP_DCLICK_S &&
         abs(xr - disp_last_click_xr) < 8 && abs(yr - disp_last_click_yr) < 8) {
@@ -3075,6 +3160,7 @@ static void disp_poll(void)
         }
         if (changed) disp_want = disp_read();
         if (changed || (!disp_placed && disp_want.set)) disp_apply();
+        if (disp_windows_fullscreen(disp_want)) disp_report_frame();
     }
     /* a rectangle: read back, shift the aim by the miss (see the restore) */
     if (disp_fixups > 0 && t >= disp_fix_s) {
@@ -3473,6 +3559,25 @@ static void win_present(void)
             eglQuerySurface(egl_dpy, egl_surf, 0x3056, &qh) &&    /* EGL_HEIGHT */
             qw > 0 && qh > 0) {
             win_w = qw; win_h = qh;
+        }
+    }
+    if (win_lcd_w) {
+        static int last_w, last_h, retries;
+        static double next_resize;
+        double now = now_s();
+        if (win_w != last_w || win_h != last_h) {
+            fprintf(stderr, "[padglhost] display: drawable %dx%d, Windows target %dx%d\n",
+                    win_w, win_h, win_lcd_w, win_lcd_h);
+            last_w = win_w; last_h = win_h;
+        }
+        if ((win_w != win_lcd_w || win_h != win_lcd_h) && retries < 4 &&
+            now - win_mapped_s >= 2.5 && now >= next_resize) {
+            /* Reassert the client size after the Windows proxy has moved.
+             * Do not request an X position or compositor fullscreen. */
+            XResizeWindow(xdpy, xwin, (unsigned)win_lcd_w, (unsigned)win_lcd_h);
+            XFlush(xdpy);
+            next_resize = now + 1.0;
+            retries++;
         }
     }
 

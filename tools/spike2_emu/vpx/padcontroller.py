@@ -219,17 +219,10 @@ def lcd_rect(setting, mons, aspect=LCD_ASPECT):
 
 
 def monitors():
-    """Every monitor's rectangle, the main one first (pywin32 or nothing)."""
-    try:
-        import win32api
-        out = []
-        for hmon, _, rect in win32api.EnumDisplayMonitors(None, None):
-            info = win32api.GetMonitorInfo(hmon)
-            out.append((tuple(rect), bool(info.get("Flags", 0) & 1)))
-        out.sort(key=lambda m: not m[1])
-        return [r for r, _ in out]
-    except Exception:                                       # noqa: BLE001
-        return []
+    """Physical rectangles in the same order as Cabinet settings."""
+    import padisplay
+
+    return [(m["x"], m["y"], m["x"] + m["w"], m["y"] + m["h"]) for m in padisplay.monitors()]
 
 
 #: how long after a window's first placement a WSLg reset to the top-left
@@ -237,7 +230,7 @@ def monitors():
 PLACE_S = 15.0
 
 
-def find_kit_window(word):
+def find_kit_window(word, *, title_prefix=None):
     """A started run's window: the top-level window whose title carries the
     kit's label and `word` (watch.sh titles them `[rig N: PAD-VPX] <title> -
     Stern Spike 2 emulator (...)` and `... - virtual playfield`)."""
@@ -250,7 +243,9 @@ def find_kit_window(word):
         if u.IsWindowVisible(h):
             buf = ctypes.create_unicode_buffer(256)
             u.GetWindowTextW(h, buf, 256)
-            if padlaunch.LABEL in buf.value and word in buf.value:
+            title = buf.value
+            matches_run = title.startswith(title_prefix) if title_prefix else padlaunch.LABEL in title
+            if matches_run and word in title:
                 found.append(h)
         return True
     u.EnumWindows(proc(cb), 0)

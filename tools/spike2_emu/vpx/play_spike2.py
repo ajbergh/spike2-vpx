@@ -1,17 +1,21 @@
 """Run a prepared SPIKE 2 title alongside its PAD-patched VPX table."""
 
 import argparse
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import re
+from shutil import copyfile
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import time
 
 # PAD's embedded Windows Python does not add the script directory to sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import padcontroller  # noqa: E402
 import padlaunch  # noqa: E402
+import vpx_lcd  # noqa: E402
 
 
 def embedded_script(table):
@@ -122,12 +126,39 @@ def wait_for_game(launch, rig, deadline, player=None):
     raise startup_error(launch)
 
 
-def play(launch, exe, table, timeout, progress=None, *, overlap=False):
+def b2s_disabled_ini(exe, target):
+    from padvpx import vpx_ini_path, vpx_ini_set
+
+    choices = (Path(vpx_ini_path()), exe.parent / "VPinballX.ini",
+               exe.parent / "assets" / "Default_VPinballX.ini")
+    for source in choices:
+        try:
+            copyfile(source, target)
+        except FileNotFoundError:
+            continue
+        break
+    # ScriptGlobalTable.Setting reads Controller from VPX's global INI.
+    vpx_ini_set({"ForceDisableB2S": 1}, section="Controller", path=target)
+
+
+def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b2s=False):
     # COM can discover the run from the board independently of VPX's environment.
     if padcontroller.Rig.board_run(launch.title):
         raise RuntimeError(f"Close the existing {launch.title} rig before starting this table.")
-    try:
+    with ExitStack() as cleanup:
+        cleanup.callback(launch.stop)
+        command = [str(exe), "-ExtMinimized"]
+        if disable_b2s:
+            folder = cleanup.enter_context(TemporaryDirectory(prefix="spike2-vpx-b2s-"))
+            ini = Path(folder) / "VPinballX.ini"
+            b2s_disabled_ini(exe, ini)
+            command.extend(["-Ini", str(ini)])
+        command.extend(["-play", str(table)])
+        target = vpx_lcd.fullscreen_target()
+        launch.windows_lcd = target
         launch.start()
+        if target:
+            cleanup.callback(vpx_lcd.Placement(launch, target).close)
         deadline = time.monotonic() + timeout
         rig = wait_for_rig(launch, deadline)
         overlap = overlap and rig.prepared_launch
@@ -139,7 +170,7 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False):
                    PAD_SLOT=str(launch.slot), PAD_VPX_LINK="1")
         if progress:
             progress("Opening VPX", False)
-        with subprocess.Popen([str(exe), "-ExtMinimized", "-play", str(table)], cwd=exe.parent,
+        with subprocess.Popen(command, cwd=exe.parent,
                               env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP) as vpx:
             if overlap:
                 try:
@@ -156,8 +187,6 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False):
                     return vpx.wait()
                 except KeyboardInterrupt:
                     print("Close VPX to stop the Stern runtime and release its slot.", file=sys.stderr)
-    finally:
-        launch.stop()
 
 
 def play_app_game(title, card, table, timeout):

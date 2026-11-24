@@ -16,6 +16,11 @@ the checklist. If a restart is required, restart Windows and reopen the app.
 Use **Get VPX** and **Choose VPX** to install or select `VPinballX64.exe`.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
+Setup verifies that WSL can execute an ARM program inside a chroot. It
+repairs a missing ARM handler in the app's distro, and the launcher checks
+again before preparing a game in case WSL has restarted. This repair keeps
+your existing distribution, card images, and cache.
+
 ## Prepare and play
 
 Supply your own SPIKE 2 SD-card image and a compatible VPX table. Godzilla LE
@@ -32,9 +37,10 @@ its download page where one is listed. In **Games**, **Get image from Stern**
 opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
 containing one `.raw`, or select a folder of raw images. The app reads the
 title and edition from the image and checks space for the optional cache.
-Choose a compatible
-VPX table to make a playable copy, or use an existing prepared table. Prepared
-pairings appear in the game library. Select **Play** to start the game and
+Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
+existing prepared table. The app saves new conversions and their companion
+files beside the original table. Prepared pairings appear in the game library.
+Select **Play** to start the game and
 open VPX. Closing VPX stops the run and returns to the library.
 
 VPX opens directly in play mode with the editor hidden. With the bundled
@@ -54,13 +60,18 @@ B2S backglass, and Stern LCD to separate screens, or start with the
 before saving. Use VPX windowed mode for app-managed playfield placement.
 The Stern LCD defaults to borderless fullscreen on a spare secondary screen.
 Select a specific screen under **Stern LCD** to choose where it fills the
-display, or select **Windowed** to share a screen with VPX.
+display, or select **Windowed** to share a screen with VPX. Windows places
+the fullscreen LCD using the same display coordinates as **Identify screens**.
+When the cabinet and Windows display numbers differ, Cabinet shows both.
+The renderer starts at the selected screen's size for fullscreen play.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
 
 A managed backglass needs 64-bit B2S Server and a matching `.directb2s`
 file. The app carries over a matching file when it patches a table. Use
 **Attach backglass** if you downloaded it separately. A custom table
 `.res` file takes precedence over the app's backglass placement.
+Choose **Disabled** under **B2S backglass** and save the layout to play
+without B2S. Select a screen or **B2S default** to turn it back on.
 
 In **Games**, select a prepared game and choose **Export launch script**.
 For LaunchBox, use the exported `.bat` as the game's **Application Path**

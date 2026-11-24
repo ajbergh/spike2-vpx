@@ -752,6 +752,10 @@ pad_ensure_guest_exec() {
     # ---- 2. the kernel's ARM handler --------------------------------------
     entry=$(_pad_binfmt_arm)
     if [ -z "$entry" ]; then
+        if [ "${WSL_DISTRO_NAME:-}" = SPIKE2-VPX ]; then
+            echo "[guest] WSL's ARM execution handler is missing. Open SPIKE 2 VPX Setup and run Repair." >&2
+            return 1
+        fi
         if [ ! -d /proc/sys/fs/binfmt_misc ]; then
             echo "[guest] This machine's table of binary formats is not visible" >&2
             echo "[guest] from in here, so whether 32-bit ARM can run at all" >&2
@@ -785,7 +789,7 @@ pad_ensure_guest_exec() {
         # the container engine's, and padbox.sh registers the handler in it
         # before every run. Reaching here means that step said why it could
         # not, a few lines up.
-        if [ -f /.dockerenv ]; then
+        if [ "${IS_WSL:-0}" != 1 ] && [ -f /.dockerenv ]; then
             echo "[guest] This is the Mac's container: the handler is registered" >&2
             echo "[guest] in the container engine before every run, and that step" >&2
             echo "[guest] failed - its reason is a few lines above." >&2

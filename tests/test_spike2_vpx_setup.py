@@ -64,9 +64,24 @@ class StandaloneSetupTest(unittest.TestCase):
             f'{{"runtime_version": {setup.runtime.RUNTIME_VERSION}, "variant": "full"}}'.encode()
         ))
         with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 2)), \
-                patch.object(self.app, "wsl", side_effect=[manifest, result(output=b"/mnt/c/Program Files"), result()]) as wsl:
+                patch.object(self.app, "wsl", side_effect=[manifest, result(output=b"/mnt/c/Program Files"), result()]) as wsl, \
+                patch.object(self.app, "arm_execution", return_value=result()) as arm:
             self.assertEqual(self.app.check_runtime().state, "Ready")
         self.assertEqual(wsl.call_args.args[-1], "/mnt/c/Program Files")
+        arm.assert_called_once_with("/mnt/c/Program Files", "check")
+
+    def test_runtime_repairs_missing_arm_handler_and_only_reports_ready_after_probe(self):
+        manifest = result(output=(
+            f'{{"runtime_version": {setup.runtime.RUNTIME_VERSION}, "variant": "full"}}'.encode()
+        ))
+        for recovery, expected in ((result(), ("Ready", "")),
+                                   (result(1, b"registration refused"), ("Repair needed", "repair_arm"))):
+            with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 2)), \
+                    patch.object(self.app, "wsl", side_effect=[manifest, result(output=b"/rig"), result()]), \
+                    patch.object(self.app, "arm_execution", side_effect=[result(10), recovery]) as arm:
+                check = self.app.check_runtime()
+            self.assertEqual((check.state, check.action), expected)
+            self.assertEqual([call.args for call in arm.call_args_list], [("/rig", "check"), ("/rig", "repair")])
 
     def test_missing_runtime_import_uses_verified_file_and_private_storage(self):
         with patch.object(setup, "distro_registration", return_value=None), \
