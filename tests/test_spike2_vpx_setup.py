@@ -44,6 +44,25 @@ class StandaloneSetupTest(unittest.TestCase):
         self.assertNotIn("restart_boot", self.app.settings)
         self.assertIn("Elevated WSL command", self.app.log_path.read_text(encoding="utf-8"))
 
+    def test_wsl_install_prompt_offers_automated_install_even_on_success_exit(self):
+        prompt = "To install, run 'wsl.exe --install'.".encode("utf-16-le")
+        with patch.object(setup, "run", return_value=result(output=prompt)):
+            check = self.app.check_wsl()
+        self.assertEqual((check.state, check.action), ("Missing", "install_wsl"))
+
+    def test_wsl_virtualization_error_offers_firmware_guidance(self):
+        for code in (b"HCS_E_HYPERV_NOT_INSTALLED", b"0x80370102"):
+            with patch.object(setup, "run", return_value=result(output=code)):
+                check = self.app.check_wsl()
+            self.assertEqual(check.state, "Needs attention")
+            self.assertIn("Intel VT-x or AMD-V", check.detail)
+
+        with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 2)), \
+                patch.object(self.app, "wsl", return_value=result(1, b"HCS_E_HYPERV_NOT_INSTALLED")):
+            check = self.app.probe("runtime", self.app.check_runtime)
+        self.assertEqual(check.state, "Needs attention")
+        self.assertIn("BIOS/UEFI", check.detail)
+
     def test_wslg_requires_session_sockets_for_ready(self):
         version = result(output="WSL version: 2.6.0\r\nWSLg version: 1.0.71\r\n".encode("utf-16-le"))
         with patch.object(setup, "run", return_value=version), \
@@ -59,7 +78,7 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertEqual(self.app.check_runtime().state, "Needs attention")
             wsl.assert_not_called()
         with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 1)):
-            self.assertIn("--set-version", self.app.check_runtime().detail)
+            self.assertEqual(self.app.check_runtime().action, "convert_runtime")
         manifest = result(output=(
             f'{{"runtime_version": {setup.runtime.RUNTIME_VERSION}, "variant": "full"}}'.encode()
         ))
@@ -69,6 +88,17 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertEqual(self.app.check_runtime().state, "Ready")
         self.assertEqual(wsl.call_args.args[-1], "/mnt/c/Program Files")
         arm.assert_called_once_with("/mnt/c/Program Files", "check")
+
+    def test_runtime_converts_only_its_own_wsl1_distribution_as_the_player(self):
+        with patch.object(setup, "distro_registration", return_value=(Path("another"), 1)), \
+                patch.object(setup, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "this app's"):
+                self.app.convert_runtime()
+            run.assert_not_called()
+        with patch.object(setup, "distro_registration", return_value=(self.app.runtime_dir, 1)), \
+                patch.object(setup, "run", return_value=result()) as run:
+            self.app.convert_runtime()
+        run.assert_called_once_with(["wsl.exe", "--set-version", setup.DISTRO, "2"], timeout=1800)
 
     def test_runtime_repairs_missing_arm_handler_and_only_reports_ready_after_probe(self):
         manifest = result(output=(

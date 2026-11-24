@@ -21,6 +21,13 @@ import vpxsetup  # noqa: E402
 
 DISTRO = "SPIKE2-VPX"
 VPX_RELEASE = "https://github.com/vpinball/vpinball/releases/tag/v10.8.0-2051-28dd6c3"
+VIRTUALIZATION_HELP = "https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows"
+VIRTUALIZATION_GUIDANCE = (
+    "WSL 2 could not use hardware virtualization. In Task Manager → Performance → CPU, "
+    "check Virtualization. If disabled, enable Intel VT-x or AMD-V (SVM Mode) in your PC's "
+    "BIOS/UEFI, then restart and reopen the app. On a virtual machine, check nested "
+    "virtualization on the host."
+)
 ROWS = {
     "wsl": "WSL 2",
     "wslg": "WSLg display and audio",
@@ -35,6 +42,13 @@ class Check:
     state: str
     detail: str
     action: str = ""
+
+
+def needs_virtualization(detail):
+    text = detail.casefold()
+    return any(code in text for code in (
+        "hcs_e_hyperv_not_installed", "0x80370102", "wsl_e_wsl2_not_supported",
+    ))
 
 
 def run(command, timeout=30):
@@ -120,24 +134,31 @@ class Setup:
                 return Check("Restart required", "Restart Windows, then reopen SPIKE 2 VPX.")
             self.settings.pop("restart_boot")
             self.save()
-        out = run(["wsl.exe", "--status"])
+        missing = Check("Missing", "Select Set up and approve the Windows administrator prompt. "
+                        "The app installs WSL 2 without adding Ubuntu.", "install_wsl")
+        try:
+            out = run(["wsl.exe", "--status"])
+        except FileNotFoundError:
+            return missing
         detail = runtime._why(out)
-        if out.returncode == 0 and "Virtual Machine Platform" not in detail:
+        status = detail.casefold()
+        if needs_virtualization(detail):
+            return Check("Needs attention", VIRTUALIZATION_GUIDANCE, "install_wsl")
+        if out.returncode == 0 and not any(message in status for message in (
+            "--install", "virtual machine platform", "wsl_e_wsl_optional_component_required",
+        )):
             return Check("Ready", "Windows reports WSL available. The runtime check verifies WSL 2 can start.")
-        if any(code in detail for code in ("HCS_E_HYPERV_NOT_INSTALLED", "0x80370102")):
-            return Check("Needs attention", "Enable hardware virtualization in BIOS/UEFI, then run Set up.",
-                         "install_wsl")
-        if "E_ACCESSDENIED" in detail:
+        if "e_accessdenied" in status:
             raise RuntimeError(detail)
         self.log.info("WSL status: %s", detail)
-        return Check("Missing", "Set up enables the WSL 2 platform without installing Ubuntu.", "install_wsl")
+        return missing
 
     def check_wslg(self, linux):
         out = run(["wsl.exe", "--version"])
         match = re.search(r"(?im)^WSLg[^:\r\n]*:\s*(\d+\.\d+(?:\.\d+)*)",
                           runtime._text(out.stdout).lstrip("\ufeff"))
         if out.returncode != 0 or not match:
-            return Check("Missing", "Update WSL to install its Linux display and audio support.", "update_wsl")
+            return Check("Missing", "Set up updates WSL to add Linux display and audio support.", "update_wsl")
         if linux.state == "Ready":
             return self.check_wslg_session()
         return Check("Detected", f"WSLg {match[1]} is installed. Install the runtime to check its session.")
@@ -159,8 +180,9 @@ class Setup:
             return Check("Needs attention", f"Another WSL distribution uses {DISTRO}. "
                          "Resolve the name conflict, then check again.")
         if version != 2:
-            return Check("Needs attention", f"{DISTRO} is registered as WSL 1. "
-                         f"Run wsl --set-version {DISTRO} 2 in Windows Terminal, then check again.")
+            return Check("Repair needed", f"{DISTRO} is registered as WSL 1. "
+                         "Back up its data, then select Repair to convert it to WSL 2.",
+                         "convert_runtime")
         manifest = self.wsl("cat", "/etc/pad-runtime.json")
         if manifest.returncode:
             raise RuntimeError(runtime._why(manifest))
@@ -202,6 +224,14 @@ class Setup:
         if rig.returncode:
             raise RuntimeError(runtime._why(rig))
         out = self.arm_execution(runtime._text(rig.stdout).strip(), "repair")
+        if out.returncode:
+            raise RuntimeError(runtime._why(out))
+
+    def convert_runtime(self):
+        registered = distro_registration()
+        if registered is None or registered[0].resolve() != self.runtime_dir.resolve() or registered[1] != 1:
+            raise RuntimeError("Conversion requires this app's SPIKE 2 WSL 1 distribution.")
+        out = run(["wsl.exe", "--set-version", DISTRO, "2"], timeout=1800)
         if out.returncode:
             raise RuntimeError(runtime._why(out))
 
@@ -259,7 +289,11 @@ class Setup:
             check = fn()
         except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as exc:
             self.log.exception("%s check failed", ROWS[name])
-            check = Check("Check failed", f"{exc} See the setup log and check again.")
+            detail = str(exc)
+            if name == "runtime" and needs_virtualization(detail):
+                check = Check("Needs attention", VIRTUALIZATION_GUIDANCE)
+            else:
+                check = Check("Check failed", f"{detail} See the setup log and check again.")
         self.log.info("%s — %s: %s", ROWS[name], check.state, check.detail)
         failure = self.settings.get("failure")
         if isinstance(failure, dict) and failure.get("row") == name and failure.get("detail"):
@@ -321,6 +355,7 @@ class Setup:
         steps = {"install_wsl": lambda: self.install_platform("Install"),
                  "update_wsl": lambda: self.install_platform("Update"),
                  "install_runtime": self.install_runtime,
+                 "convert_runtime": self.convert_runtime,
                  "repair_arm": self.repair_arm,
                  "register_controller": lambda: self.controller("register")}
         self.settings.pop("failure", None)
@@ -336,6 +371,9 @@ class Setup:
             raise RuntimeError(f"{ROWS[key]} did not pass its check after setup.")
         except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError) as exc:
             self.log.exception("%s setup failed", ROWS[key])
-            self.settings["failure"] = {"row": key, "detail": str(exc)}
+            detail = str(exc)
+            if key == "runtime" and needs_virtualization(detail):
+                detail = VIRTUALIZATION_GUIDANCE
+            self.settings["failure"] = {"row": key, "detail": detail}
             self.save()
             return self.checks()

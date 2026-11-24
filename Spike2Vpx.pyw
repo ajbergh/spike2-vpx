@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
 from spike2_vpx.player import STERN_IMAGES, Player, artwork_paths, folder_images, image_version, supported_tables
-from spike2_vpx_setup import ROWS, VPX_RELEASE, Setup
+from spike2_vpx_setup import ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
 from spike2_vpx import backglass, cabinet, sessions, support
 import padisplay
 import padlaunch
@@ -402,6 +402,13 @@ class PlayerWindow:
         return "break"
 
     def build_setup(self):
+        requirements = ttk.Frame(self.setup_page)
+        requirements.pack(fill="x", pady=(0, 8))
+        ttk.Label(requirements, text="WSL 2 and hardware virtualization are required. "
+                  "Set up installs the Windows components it needs.",
+                  style="Hint.TLabel", wraplength=560, justify="left").pack(side="left")
+        ttk.Button(requirements, text="Virtualization help",
+                   command=lambda: webbrowser.open(VIRTUALIZATION_HELP)).pack(side="right")
         checklist = ttk.LabelFrame(self.setup_page, text="Setup checklist", padding=(12, 4, 12, 10))
         checklist.pack(fill="both", expand=True)
         checklist.columnconfigure(0, weight=1)
@@ -1034,7 +1041,12 @@ class PlayerWindow:
             return
 
     def check_again(self):
-        self.start(self.setup.checks, self.show_checks, "Checking this PC…")
+        def work():
+            resume = "restart_boot" in self.setup.settings
+            checks = self.setup.checks()
+            return self.run_setup_steps(checks) if resume else checks
+
+        self.start(work, self.show_checks, "Checking this PC…")
 
     def show_checks(self, checks):
         self.checks = checks
@@ -1068,18 +1080,18 @@ class PlayerWindow:
                 return key, check.action
         return next(((key, check.action) for key, check in checks.items() if check.action), None)
 
-    def repair(self):
-        def work():
-            checks = self.setup.checks()
-            while (step := self.next_step(checks)):
-                key, action = step
-                self.report(f"Setting up {ROWS[key]}…", False)
-                checks = self.setup.repair(key, action)
-                if checks[key].state == "Setup failed":
-                    break
-            return checks
+    def run_setup_steps(self, checks):
+        while (step := self.next_step(checks)):
+            key, action = step
+            self.report(f"Setting up {ROWS[key]}… Windows may ask for administrator permission.", False)
+            checks = self.setup.repair(key, action)
+            if checks[key].state == "Setup failed":
+                break
+        return checks
 
-        self.start(work, self.show_checks, "Setting up this PC… Windows may ask for administrator permission.")
+    def repair(self):
+        self.start(lambda: self.run_setup_steps(self.setup.checks()), self.show_checks,
+                   "Setting up this PC… Windows may ask for administrator permission.")
 
     def choose_vpx(self):
         exe = filedialog.askopenfilename(parent=self.root, title="Choose Visual Pinball X",

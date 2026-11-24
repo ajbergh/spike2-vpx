@@ -10,10 +10,23 @@ Open **SPIKE 2 VPX** from the Start menu, or run `python Spike2Vpx.pyw` from a
 checkout with x64 Python and Tcl/Tk. For a checkout, install the bundled
 Python dependencies with `python -m pip install -r requirements-windows.txt`.
 
-The checklist covers WSL 2, WSLg, the private `SPIKE2-VPX` distribution,
-Visual Pinball X 10.8+ x64, and the controller. Run **Set up** and follow
-the checklist. If a restart is required, restart Windows and reopen the app.
-Use **Get VPX** and **Choose VPX** to install or select `VPinballX64.exe`.
+**WSL 2 (Windows Subsystem for Linux) and hardware virtualization are required.**
+In the app, select **Set up** and approve the Windows administrator prompt.
+Setup enables Virtual Machine Platform, installs or updates WSL as needed, and
+imports the app's private `SPIKE2-VPX` distribution. If Windows requests a
+restart, restart and reopen the app to continue setup.
+
+If setup reports a virtualization problem, open **Task Manager → Performance →
+CPU** and check **Virtualization**. If disabled, consult your PC manufacturer's
+instructions for entering BIOS/UEFI. Enable **Intel Virtualization Technology
+(VT-x)** or **AMD-V / SVM Mode**, save the firmware settings, and boot back into
+Windows. Reopen the app and select **Set up**. A Windows virtual machine needs
+nested virtualization enabled on its host.
+[Microsoft's guide to enabling virtualization](https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows)
+
+The checklist also covers WSLg display and audio, Visual Pinball X 10.8+ x64,
+and the controller. **Get VPX** opens the VPX download page. After installing
+VPX, use **Choose VPX** if the app needs help locating `VPinballX64.exe`.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
 Setup verifies that WSL can execute an ARM program inside a chroot. It
