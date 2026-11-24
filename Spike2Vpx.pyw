@@ -14,7 +14,7 @@ import webbrowser
 
 from spike2_vpx.player import STERN_IMAGES, Player, artwork_paths, folder_images, image_version, supported_tables
 from spike2_vpx_setup import ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
-from spike2_vpx import backglass, cabinet, sessions, support
+from spike2_vpx import backglass, cabinet, lighting, sessions, support
 import padisplay
 import padlaunch
 import play_spike2
@@ -123,6 +123,7 @@ class PlayerWindow:
         self.launch_error_game = None
         self.launching = False
         self.last_stage = ""
+        self.lighting_notice = ""
         self.details_open = False
         root.title("SPIKE 2 VPX")
         root.geometry("960x730")
@@ -144,16 +145,19 @@ class PlayerWindow:
         self.setup_page = ttk.Frame(self.tabs, padding=18)
         self.settings_page = ttk.Frame(self.tabs, padding=18)
         self.cabinet_page = ttk.Frame(self.tabs, padding=18)
+        self.lighting_page = ttk.Frame(self.tabs, padding=18)
         self.tabs.add(self.games_page, text="Games")
         self.tabs.add(self.tables_page, text="Supported Tables")
         self.tabs.add(self.setup_page, text="Setup")
         self.tabs.add(self.cabinet_page, text="Cabinet")
+        self.tabs.add(self.lighting_page, text="Lighting")
         self.tabs.add(self.settings_page, text="Settings")
 
         self.build_games()
         self.build_supported_tables()
         self.build_setup()
         self.build_cabinet()
+        self.lighting = lighting.LightingPage(self, self.lighting_page)
         self.build_settings()
         self.build_cabinet_mode()
 
@@ -844,6 +848,8 @@ class PlayerWindow:
     def tab_changed(self, _event):
         if self.tabs.select() == str(self.cabinet_page):
             self.refresh_screens()
+        if self.tabs.select() == str(self.lighting_page):
+            self.lighting.refresh()
         self.update_buttons()
 
     def reload_library(self, select=None):
@@ -906,7 +912,9 @@ class PlayerWindow:
     def show_game(self, game):
         if game != self.game and not self.same_game(game, self.game):
             self.launch_text.set("")
+            self.lighting_notice = ""
         self.game = game
+        self.lighting.show_game(game, self.lighting_notice)
         for item, card in self.card_buttons:
             card.configure(style="SelectedCard.TButton" if game == item else "GameCard.TButton")
         self.game_title.configure(text=game.name if game else "Add a game")
@@ -1020,6 +1028,9 @@ class PlayerWindow:
     def report(self, message, playing):
         self.results.put(("progress", message, playing))
 
+    def report_lighting(self, message):
+        self.results.put(("lighting", message, None))
+
     def finish(self):
         while True:
             try:
@@ -1027,14 +1038,22 @@ class PlayerWindow:
             except queue.Empty:
                 self.root.after(80, self.finish)
                 return
+            if kind == "lighting":
+                if value:
+                    self.lighting_notice = value
+                    self.summary.configure(text=value)
+                self.lighting.show_game(self.game, self.lighting_notice)
+                continue
             if kind == "progress":
-                self.summary.configure(text=value)
+                self.summary.configure(text=" ".join(filter(None, (value, self.lighting_notice)))
+                                       if self.launching else value)
                 if self.launching and value in LAUNCH_STAGES:
                     self.last_stage = value
                     index = LAUNCH_STAGES.index(value)
-                    self.launch_text.set("\n".join(
+                    stages = "\n".join(
                         ("✓  " if step < index else "›  " if step == index else "     ") + stage
-                        for step, stage in enumerate(LAUNCH_STAGES)))
+                        for step, stage in enumerate(LAUNCH_STAGES))
+                    self.launch_text.set("\n".join(filter(None, (stages, self.lighting_notice))))
                 if extra:
                     self.playing = True
                     self.launch_text.set("Playing in Visual Pinball X")
@@ -1240,6 +1259,8 @@ class PlayerWindow:
         self.launching = True
         self.launch_error_game = None
         self.last_stage = "Checking files"
+        self.lighting_notice = ""
+        self.lighting.show_game(game, "")
         self.launch_text.set("›  Checking files")
 
         def done(code):
@@ -1248,7 +1269,7 @@ class PlayerWindow:
                 text = f"VPX exited with code {code}. Open logs in Settings for details."
                 failed(RuntimeError(text))
             else:
-                self.summary.configure(text="Game ended. The runtime has stopped.")
+                self.summary.configure(text=self.lighting_notice or "Game ended. The runtime has stopped.")
             updated = next((row for row in self.player.library() if row.title == game.title
                             and row.image == game.image), game)
             self.reload_library(updated)
@@ -1263,7 +1284,7 @@ class PlayerWindow:
             self.launch_text.set(f"Stopped at {self.last_stage.lower()}\n{text}")
             self.reload_library(self.game)
 
-        self.start(lambda: self.player.play(game, self.report),
+        self.start(lambda: self.player.play(game, self.report, lighting_update=self.report_lighting),
                    done, f"Starting {game.name}…", failed)
 
     def recover_session(self):

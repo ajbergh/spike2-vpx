@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import ExitStack
+import json
 import os
 from pathlib import Path
 import re
@@ -10,11 +11,14 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import time
+from uuid import uuid4
+from xml.etree.ElementTree import ParseError
 
 # PAD's embedded Windows Python does not add the script directory to sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import padcontroller  # noqa: E402
 import padlaunch  # noqa: E402
+import padlighting  # noqa: E402
 import vpx_lcd  # noqa: E402
 
 
@@ -141,10 +145,78 @@ def b2s_disabled_ini(exe, target):
     vpx_ini_set({"ForceDisableB2S": 1}, section="Controller", path=target)
 
 
-def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b2s=False):
+def lighting_sources(launch, rig, deadline):
+    """Return active and discoverable sources after this run publishes its tables."""
+    until = min(deadline, time.monotonic() + 5)
+    while launch.alive():
+        try:
+            if rig.share:
+                marker = padcontroller.read_block(Path(rig.dump) / "lighting-tables", 64)
+            else:
+                result = rig._wsl(["cat", rig.wsl_dump("lighting-tables")], timeout=1)
+                marker = result.stdout if result is not None and result.returncode == 0 else None
+            fields = marker.split() if marker else []
+            if len(fields) == 2 and fields[0] == launch.lighting_scan.encode("ascii"):
+                nodes_current = fields[1] == b"1"
+                if rig.share:
+                    tables = rig.tables_dir(launch.title)
+                    return read_lighting_sources(launch, tables, nodes_current,
+                                                 Path(rig.dump) / "topper_off")
+                # A fresh directory prevents a failed fetch from reusing another run's files.
+                with TemporaryDirectory(prefix="spike2-lighting-") as folder:
+                    if rig.fetch(rig.wsl_dump("tables"), [launch.title], folder):
+                        return read_lighting_sources(launch, Path(folder) / launch.title, nodes_current)
+        except (OSError, ValueError):
+            pass
+        if time.monotonic() >= until:
+            break
+        time.sleep(0.2)
+    return {}, None
+
+
+def read_lighting_sources(launch, tables, nodes_current, topper_off=None):
+    tables = Path(tables)
+    if not nodes_current or not (tables / "node_ident.txt").is_file():
+        # A verified device table with no LED rows is conclusive on its own.
+        with (tables / "device_xy.txt").open(encoding="utf-8", errors="replace") as stream:
+            has_leds = any(line.startswith("led ") for line in stream)
+        return {}, None if has_leds else ()
+    options = {"topper_enabled": launch.lighting_topper, "topper_off": topper_off}
+    active = padlighting.stern_sources(tables, **options)
+    available = active if launch.lighting_topper else padlighting.stern_sources(
+        tables, include_optional_topper=True, **options)
+    return active, tuple(available)
+
+
+def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b2s=False,
+         lighting=None, lighting_report=None):
     # COM can discover the run from the board independently of VPX's environment.
     if padcontroller.Rig.board_run(launch.title):
         raise RuntimeError(f"Close the existing {launch.title} rig before starting this table.")
+    lighting = padlighting.settings(lighting)
+    config = None
+    notice = ""
+
+    def report_lighting(available, message=""):
+        if message:
+            launch.note(message)
+        if lighting_report:
+            lighting_report(available, message)
+        elif message:
+            if progress:
+                progress(message, False)
+            else:
+                print(message, file=sys.stderr, flush=True)
+
+    if lighting.get("enabled"):
+        try:
+            config = padlighting.prepare(lighting, padcontroller._dof_dirs(), table.parent)
+        except (OSError, ValueError, TypeError, ParseError) as exc:
+            notice = f"Stern lighting skipped. {exc}"
+    if config or lighting_report:
+        launch.lighting_scan = uuid4().hex
+    if config:
+        launch.lighting_topper = any(role == "topper" for _, role, _ in config[1])
     with ExitStack() as cleanup:
         cleanup.callback(launch.stop)
         command = [str(exe), "-ExtMinimized"]
@@ -164,15 +236,67 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
         overlap = overlap and rig.prepared_launch
         if progress:
             progress("Connecting controller", False)
-        if not overlap:
+        if not overlap or config:
             wait_for_game(launch, rig, deadline)
+        lights = link = None
+        if config:
+            controllers, mappings, brightness = config
+            sources, available = lighting_sources(launch, rig, deadline)
+            wanted = {role for _, role, _ in mappings}
+            unavailable = wanted - sources.keys()
+            mirrored = set()
+            if lighting.get("speaker_fallback") and sources.get("speaker"):
+                mirrored = unavailable & {"left", "right"}
+                mappings = [(fixture, "speaker" if role in mirrored else role, pixels)
+                            for fixture, role, pixels in mappings]
+                unavailable -= mirrored
+            try:
+                if available is None:
+                    raise ValueError("The game's lighting tables were unavailable.")
+                if unavailable == wanted:
+                    raise ValueError("This image has no usable Stern lighting for your assigned fixtures.")
+                lights = padlighting.Session(controllers, mappings, sources, brightness, launch.note)
+                try:
+                    if not padcontroller.SHARE_ON or not rig.share or not padcontroller.coilmap.has_magic(
+                            padcontroller.read_block(rig.led_path(), padcontroller.READ_N)):
+                        link = padcontroller.RigLink(rig)
+                        cleanup.callback(link.close)
+                except Exception as exc:
+                    launch.note(f"Expression lighting link unavailable: {exc}")
+                cleanup.callback(lights.close)
+                launch.note("Expression lighting owns " +
+                            ", ".join(device.port for device in lights.configs.values()))
+                messages = []
+                if mirrored:
+                    messages.append("Speaker lighting on " + ", ".join(
+                        padlighting.ROLES[role].lower() for role in sorted(mirrored)) + ".")
+                if unavailable:
+                    messages.append("Stern lighting unavailable for " + ", ".join(
+                        padlighting.ROLES[role].lower() for role in sorted(unavailable)) + ".")
+                notice = " ".join(messages)
+            except (OSError, ValueError) as exc:
+                fallback = "" if disable_b2s else " Your usual DOF setup can control the strips."
+                notice = f"Stern lighting skipped. {exc}{fallback}"
+            report_lighting(available, notice)
+        elif notice:
+            report_lighting(None, notice)
         env = dict(os.environ, PAD_WSL_DISTRO=rig.distro, PAD_ROOT_WSL=rig.root,
                    PAD_SLOT=str(launch.slot), PAD_VPX_LINK="1")
         if progress:
             progress("Opening VPX", False)
         with subprocess.Popen(command, cwd=exe.parent,
                               env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP) as vpx:
-            if overlap:
+            if lights:
+                def read_lights():
+                    if link:
+                        blocks = link.blocks()
+                        if blocks:
+                            return blocks[0]
+                    if padcontroller.SHARE_ON and rig.share:
+                        return padcontroller.read_block(rig.led_path(), padcontroller.READ_N)
+
+                lights.start(read_lights, lambda: vpx.poll() is None and launch.alive())
+            if overlap and not config:
                 try:
                     if not wait_for_game(launch, rig, deadline, vpx):
                         return vpx.returncode
@@ -180,6 +304,9 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
                     if vpx.poll() is None:
                         vpx.terminate()
                     raise
+            if lighting_report and not config:
+                _, available = lighting_sources(launch, rig, deadline)
+                report_lighting(available)
             if progress:
                 progress("Playing in Visual Pinball X", True)
             while True:
@@ -264,7 +391,13 @@ def main():
                 raise RuntimeError(f"WSL could not access an executable at {game_dir}/game. {detail}".strip())
         launch = padlaunch.Launch(title, str(card) if card else None, dist=distro, minutes=0,
                                   game_dir=game_dir, prepared=True)
-        return play(launch, exe, table, args.startup_timeout, overlap=overlap)
+        settings_path = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Spike2Vpx" / "setup.json"
+        try:
+            settings = padlighting.settings(json.loads(settings_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            settings = {}
+        return play(launch, exe, table, args.startup_timeout, overlap=overlap,
+                    lighting=settings.get("lighting"))
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, RuntimeError, ImportError, subprocess.SubprocessError) as exc:

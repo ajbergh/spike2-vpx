@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass, replace
 from base64 import b64encode
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ from spike2_vpx_setup import APP, DISTRO, RIG
 # The setup module loads the VPX kit from the same location as the console launcher.
 import padisplay
 import padlaunch
+import padlighting
 import padvpx
 import play_spike2
 from spike2_vpx import cabinet, runtime, sessions, support
@@ -374,7 +376,31 @@ class Player:
         return replace(game, table=str(target),
                        table_release=info["table"].get("name") or prepared.stem)
 
-    def play(self, game, progress, timeout=180):
+    def lighting_record(self, game):
+        """Cache identity includes the file metadata so replacement images get a new scan."""
+        try:
+            path = Path(game.image).resolve(strict=True)
+            info = path.stat()
+        except OSError:
+            return None
+        identity = (game.title, os.path.normcase(str(path)), info.st_size, info.st_mtime_ns,
+                    info.st_ctime_ns, info.st_ino)
+        key = sha256(json.dumps(identity).encode("ascii")).hexdigest()
+        return self.setup.data / "lighting-scans" / f"{key}.json"
+
+    def game_lighting(self, game):
+        record = self.lighting_record(game)
+        if record is None:
+            return None
+        try:
+            roles = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if isinstance(roles, list) and all(isinstance(role, str) and role in padlighting.ROLES for role in roles):
+            return frozenset(roles)
+        return None
+
+    def play(self, game, progress, timeout=180, *, lighting_update=None):
         exe = self.setup.vpx_executable()
         if exe is None or self.setup.check_vpx().state != "Ready":
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
@@ -400,14 +426,28 @@ class Player:
         launch = padlaunch.Launch(title, game.image, dist=DISTRO, minutes=0, prepared=True,
                                   audio_control=str(self.audio_path))
         started = False
+        lighting_record = self.lighting_record(game)
 
         def report(message, playing):
             nonlocal started
             started = started or playing
             progress(message, playing)
 
+        def report_lighting(roles, message):
+            if roles is not None and lighting_record and lighting_record == self.lighting_record(game):
+                try:
+                    lighting_record.parent.mkdir(exist_ok=True, parents=True)
+                    support.atomic_write(lighting_record, json.dumps(roles).encode("ascii"))
+                except OSError:
+                    self.setup.log.exception("Could not save game lighting compatibility")
+            if lighting_update:
+                lighting_update(message)
+            elif message:
+                progress(message, False)
+
         result = play_spike2.play(launch, exe.resolve(), table, timeout, progress=report, overlap=overlap,
-                                  disable_b2s=disable_b2s)
+                                  disable_b2s=disable_b2s, lighting=self.setup.settings.get("lighting"),
+                                  lighting_report=report_lighting)
         if started:
             try:
                 self.record_played(game)

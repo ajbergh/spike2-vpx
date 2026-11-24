@@ -429,6 +429,8 @@ class Launch:
         self.game_dir = game_dir
         self.audio_control = audio_control
         self.windows_lcd = None
+        self.lighting_topper = False
+        self.lighting_scan = ""
         self.prepared = prepared or bool(game_dir)
         self.label = "%s-%d" % (LABEL, os.getpid()) if self.prepared else LABEL
         self.distro = dist if dist is not None else distro()
@@ -544,6 +546,8 @@ class Launch:
     def env(self):
         env = self.board_env() + ["PAD_SLOT=%d" % self.slot, "PAD_LABEL=%s" % self.label,
                                   "PAD_HIDDEN=0", "PAD_AUDIO=1", "PAD_PLAYFIELD=0"]
+        if self.lighting_scan:
+            env.append("PAD_LIGHTING_SCAN=" + self.lighting_scan)
         if self.audio_control:
             env.append("PAD_AUDIO_CTL=" + self.audio_control)
         if self.windows_lcd:
@@ -552,9 +556,11 @@ class Launch:
                         "PAD_WINDOWS_LCD_H=%d" % (bottom - y),
                         "PAD_WINDOWS_LCD_FRAME=" + self.lcd_frame_path().name])
         if self.prepared:
-            env += ["PAD_SELECT=0", "PAD_TOPPER=0", "PAD_BALL_FEED=0",
+            env += ["PAD_SELECT=0", "PAD_TOPPER=%d" % self.lighting_topper, "PAD_BALL_FEED=0",
                      "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0",
                      "PAD_VPX_PERSIST=1"]
+            if self.lighting_topper:
+                env.append("PAD_GL2_OFF=1")
             if self.game_dir:
                 return env + ["PAD_GAME_DIR=" + self.game_dir, "PAD_GAME_DIR_TITLE=" + self.title,
                               "PAD_CARD="]

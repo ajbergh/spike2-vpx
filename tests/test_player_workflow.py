@@ -307,13 +307,20 @@ def test_play_defaults_to_borderless_fullscreen_on_a_spare_display(player, tmp_p
     monkeypatch.setattr(module.padlaunch, "Launch", Mock())
     path = tmp_path / "rig-board" / "display.conf"
 
-    def start(*_, **__):
+    def start(*_, lighting_report, **__):
         assert "monitor=2 mode=fullscreen border=0" in path.read_text()
         assert "x=-1280 y=0 w=1280 h=720 fs=1" in path.read_text()
+        lighting_report((), "Stern lighting skipped.")
         return 0
 
     monkeypatch.setattr(module.play_spike2, "play", start)
-    assert player.play(game, Mock()) == 0
+    notice = Mock()
+    assert player.game_lighting(game) is None
+    assert player.play(game, Mock(), lighting_update=notice) == 0
+    notice.assert_called_once_with("Stern lighting skipped.")
+    assert player.game_lighting(game) == frozenset()
+    image.write_bytes(b"replacement build")
+    assert player.game_lighting(game) is None
     assert "lcd" not in cabinet.resolve({}, [primary])
     assert "lcd" not in cabinet.resolve({"backglass": "spare"}, screens)
     assert "lcd" not in cabinet.resolve({"lcd": cabinet.WINDOWED_LCD}, screens)

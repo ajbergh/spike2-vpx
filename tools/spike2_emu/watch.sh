@@ -2571,8 +2571,11 @@ if :; then
     # run of a title that was not the last one on this rig found no binary and
     # kept a device table from an older reader for good.
     MKT_ARGS=(--game "$GAME")
-    [ -f "$GAME_ELF" ] && MKT_ARGS+=(--dir "${GAME_ELF%/*}")
+    [ -f "$GAME_ELF" ] && MKT_ARGS+=(--dir "${GAME_ELF%/*}" --elf "$GAME_ELF")
     python3 "$RIG/mktables.py" "${MKT_ARGS[@]}" > "$TBL_OUT" 2>&1
+    if [ -n "${PAD_LIGHTING_SCAN:-}" ] && grep -qx 'lighting-tables=current' "$TBL_OUT"; then
+        printf '%s %s\n' "$PAD_LIGHTING_SCAN" "$NBID_FRESH" > "$ROOT/dump/lighting-tables"
+    fi
     grep -v '^drawable=' "$TBL_OUT" | sed 's/^/[watch]   /'
 
     # ★ ITEM 49: PASS ONE JUST RAN AS ROOT ON A PIVOT RUN, AND PASS TWO RUNS

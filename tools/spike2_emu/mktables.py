@@ -869,7 +869,7 @@ def main():
                     help="build nothing: exit 0 when the switch list is the "
                          "running build's, 1 when it is missing or another's")
     ap.add_argument("--elf", default=None,
-                    help="with --current: the running game binary (default: "
+                    help="the running game binary for freshness checks (default: "
                          "the one the run published)")
     ap.add_argument("--dir", default=None,
                     help="the title's own directory (its game ELF and assets): "
@@ -885,6 +885,10 @@ def main():
     made = build(a.game, a.log, a.wait, a.force)
     if not made:
         print("nothing written")
+    if os.environ.get("PAD_LIGHTING_SCAN") and a.dir:
+        dev = gameinfo.table("device_xy.txt", a.game)
+        if dev and _built_from(dev, a.elf or os.path.join(a.dir, "game")):
+            print("lighting-tables=current")
     # A machine-readable last line, so watch.sh can decide whether to open the
     # playfield window now or wait for the switch table first.
     print("drawable=%s" % ("yes" if drawable(a.game) else "no"))
