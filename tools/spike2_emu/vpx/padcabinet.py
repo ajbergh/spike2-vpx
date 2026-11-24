@@ -216,7 +216,10 @@ def res_values(base, monitor, mons):
         vals = [str(main["w"]), str(main["h"]), "0", "0", "1", "0", "0",
                 "0", "0", "0", "0", "0"]
     vals[2], vals[3] = str(monitor["w"]), str(monitor["h"])
-    vals[4] = "@%d" % monitor["x"]
+    # B2S's @x selector cannot distinguish vertically stacked screens.
+    display_number = monitor.get("display_number")
+    separate_x = sum(m["x"] == monitor["x"] for m in mons) == 1
+    vals[4] = str(display_number) if not separate_x and display_number else "@%d" % monitor["x"]
     vals[5], vals[6] = "0", "0"
     return vals
 

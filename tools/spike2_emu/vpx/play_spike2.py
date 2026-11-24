@@ -99,10 +99,12 @@ def play(launch, exe, table, timeout, progress=None):
     try:
         launch.start()
         if progress:
-            progress("Waiting for the Stern game and controller…", False)
+            progress("Connecting controller", False)
         rig = wait_for_game(launch, timeout)
         env = dict(os.environ, PAD_WSL_DISTRO=rig.distro, PAD_ROOT_WSL=rig.root,
                    PAD_SLOT=str(launch.slot), PAD_VPX_LINK="1")
+        if progress:
+            progress("Opening VPX", False)
         with subprocess.Popen([str(exe), "-play", str(table)], cwd=exe.parent,
                               env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP) as vpx:
             if progress:
@@ -116,6 +118,23 @@ def play(launch, exe, table, timeout, progress=None):
         launch.stop()
 
 
+def play_app_game(title, card, table, timeout):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from spike2_vpx.player import Game, Player
+    from spike2_vpx_setup import Setup
+
+    setup = Setup()
+    try:
+        player = Player(setup)
+        game = Game(title, str(card), str(table))
+        for warning in player.preflight(game):
+            print(warning, file=sys.stderr, flush=True)
+        return player.play(game, lambda message, _: print(message, flush=True), timeout)
+    finally:
+        for handler in setup.log.handlers:
+            handler.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -124,6 +143,7 @@ def main():
     parser.add_argument("--table", type=Path, required=True, help="PAD-patched .vpx file")
     parser.add_argument("--vpx-exe", type=Path, help="Override the installed VPX player")
     parser.add_argument("--distro", help="Override the prepared WSL distribution")
+    parser.add_argument("--app-game", help="Launch an exported app pairing using the app settings")
     parser.add_argument("--startup-timeout", type=int, default=180)
     args = parser.parse_args()
     try:
@@ -131,6 +151,10 @@ def main():
             raise RuntimeError("This launcher requires Windows and WSL.")
         if args.startup_timeout < 1:
             raise ValueError("Startup timeout must be positive.")
+        if args.app_game:
+            if not args.card:
+                raise ValueError("An exported game requires a card image.")
+            return play_app_game(args.app_game, args.card, args.table, args.startup_timeout)
         table = args.table.resolve(strict=True)
         if not table.is_file() or table.suffix.lower() != ".vpx":
             raise ValueError("Pass a PAD-patched .vpx table.")

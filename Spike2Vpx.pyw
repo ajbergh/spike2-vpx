@@ -8,8 +8,9 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
-from spike2_vpx.player import Player, folder_images, supported_tables
+from spike2_vpx.player import STERN_IMAGES, Player, folder_images, supported_tables
 from spike2_vpx_setup import ROWS, VPX_RELEASE, Setup
+from spike2_vpx import cabinet
 import padisplay
 import padlaunch
 import play_spike2
@@ -28,8 +29,8 @@ class PlayerWindow:
         self.cache_note = ""
         self.first_check = True
         root.title("SPIKE 2 VPX")
-        root.geometry("940x680")
-        root.minsize(820, 600)
+        root.geometry("960x730")
+        root.minsize(840, 660)
         root.protocol("WM_DELETE_WINDOW", self.close)
 
         style = ttk.Style(root)
@@ -45,14 +46,17 @@ class PlayerWindow:
         self.tables_page = ttk.Frame(self.tabs, padding=18)
         self.setup_page = ttk.Frame(self.tabs, padding=18)
         self.settings_page = ttk.Frame(self.tabs, padding=18)
+        self.cabinet_page = ttk.Frame(self.tabs, padding=18)
         self.tabs.add(self.games_page, text="Games")
         self.tabs.add(self.tables_page, text="Supported Tables")
         self.tabs.add(self.setup_page, text="Setup")
+        self.tabs.add(self.cabinet_page, text="Cabinet")
         self.tabs.add(self.settings_page, text="Settings")
 
         self.build_games()
         self.build_supported_tables()
         self.build_setup()
+        self.build_cabinet()
         self.build_settings()
 
         status = ttk.Frame(page)
@@ -64,6 +68,7 @@ class PlayerWindow:
         self.tabs.select(self.setup_page)
         self.reload_library()
         self.check_again()
+        self.tabs.bind("<<NotebookTabChanged>>", self.tab_changed, add="+")
 
     def build_games(self):
         page = self.games_page
@@ -97,22 +102,33 @@ class PlayerWindow:
         self.image_text.pack(anchor="w")
         images = ttk.Frame(image)
         images.pack(fill="x", pady=(8, 0))
-        self.image_button = ttk.Button(images, text="Choose image…", command=self.choose_image)
+        self.image_button = ttk.Button(images, text="Import image…", command=self.choose_image)
         self.image_button.pack(side="left")
         self.folder_button = ttk.Button(images, text="Choose folder…", command=self.choose_folder)
-        self.folder_button.pack(side="left", padx=(8, 0))
+        self.folder_button.pack(side="left", padx=(0, 8))
+        ttk.Button(images, text="Get image from Stern", command=self.get_image).pack(side="left")
 
         table = ttk.LabelFrame(detail, text="Prepare table", padding=12)
         table.pack(fill="x", pady=(0, 10))
         self.table_text = ttk.Label(table, wraplength=440, justify="left")
         self.table_text.pack(anchor="w")
-        self.table_button = ttk.Button(table, text="Choose table…", command=self.choose_table)
-        self.table_button.pack(anchor="w", pady=(8, 0))
+        pairing = ttk.Frame(table)
+        pairing.pack(fill="x", pady=(8, 0))
+        self.table_button = ttk.Button(pairing, text="Choose table…", command=self.choose_table)
+        self.table_button.pack(side="left")
+        self.backglass_button = ttk.Button(pairing, text="Attach backglass…", command=self.attach_backglass)
+        self.backglass_button.pack(side="left", padx=(8, 0))
 
-        self.play_button = ttk.Button(detail, text="Play", command=self.play)
-        self.play_button.pack(anchor="w", pady=(4, 6))
+        actions = ttk.Frame(detail)
+        actions.pack(fill="x", pady=(4, 6))
+        self.play_button = ttk.Button(actions, command=self.next_game_step)
+        self.play_button.pack(side="left")
+        self.export_button = ttk.Button(actions, text="Export launch script…", command=self.export_game)
+        self.export_button.pack(side="left", padx=(8, 0))
         self.play_hint = ttk.Label(detail, style="Hint.TLabel", wraplength=440, justify="left")
         self.play_hint.pack(anchor="w")
+        self.vpx_hint = ttk.Label(detail, style="Hint.TLabel", wraplength=440, justify="left")
+        self.vpx_hint.pack(anchor="w", pady=(8, 0))
 
     def build_supported_tables(self):
         page = self.tables_page
@@ -207,23 +223,176 @@ class PlayerWindow:
             side="left", padx=8)
         ttk.Button(actions, text="Open logs", command=self.open_logs).pack(side="right")
 
+    def build_cabinet(self):
+        page = self.cabinet_page
+        page.columnconfigure(1, weight=1)
+        ttk.Label(page, text="Cabinet display setup", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(page, text="Identify your screens, assign a role to each screen, then test and save.",
+                  wraplength=620).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 14))
+        self.screen_vars = {}
+        self.screen_boxes = {}
+        self.screens = padisplay.monitors()
+        for row, (role, label) in enumerate(cabinet.ROLES.items(), start=2):
+            ttk.Label(page, text=label).grid(row=row, column=0, sticky="w", pady=7)
+            self.screen_vars[role] = tk.StringVar()
+            box = ttk.Combobox(page, textvariable=self.screen_vars[role], state="readonly", width=42)
+            box.grid(row=row, column=1, sticky="w", padx=16)
+            box.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
+            self.screen_boxes[role] = box
+        buttons = ttk.Frame(page)
+        buttons.grid(row=5, column=0, columnspan=2, sticky="w", pady=(16, 8))
+        for label, action in (("Refresh screens", self.refresh_screens),
+                              ("Identify screens", self.identify_screens),
+                              ("Single-screen preset", self.single_screen),
+                              ("Test layout", self.test_layout)):
+            ttk.Button(buttons, text=label, command=action).pack(side="left", padx=(0, 8))
+        self.save_cabinet = ttk.Button(page, text="Save display layout", command=self.save_layout)
+        self.save_cabinet.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.cabinet_hint = ttk.Label(page, style="Hint.TLabel", wraplength=620, justify="left")
+        self.cabinet_hint.grid(row=7, column=0, columnspan=2, sticky="w")
+        ttk.Label(page, text="Use VPX windowed mode when assigning a playfield screen. "
+                  "A backglass needs 64-bit B2S Server and a matching .directb2s file.",
+                  style="Hint.TLabel", wraplength=620, justify="left").grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Button(page, text="Get B2S Server", command=lambda: webbrowser.open(
+            "https://github.com/vpinball/b2s-backglass/releases")).grid(
+            row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.overlays = []
+        self.overlay_timer = None
+        self.set_screen_choices(self.player.layout(self.screens))
+
+    def selected_layout(self):
+        return {role: self.screen_choices[role][variable.get()] for role, variable in self.screen_vars.items()
+                if self.screen_choices[role][variable.get()]}
+
+    def set_screen_choices(self, layout):
+        self.screen_choices = {}
+        for role, variable in self.screen_vars.items():
+            choices = {cabinet.DEFAULTS[role]: ""}
+            if role == "lcd":
+                choices["Windowed"] = cabinet.WINDOWED_LCD
+            for monitor in self.screens:
+                name = f"Screen {monitor['n']} ({monitor['w']} × {monitor['h']})"
+                if monitor["primary"]:
+                    name += " · primary"
+                choices[name] = cabinet.screen_key(monitor)
+            key = layout.get(role, "")
+            selected = next((label for label, value in choices.items() if value == key), None)
+            if selected is None:
+                selected = "Saved screen · disconnected"
+                choices[selected] = key
+            self.screen_choices[role] = choices
+            self.screen_boxes[role].configure(values=list(choices))
+            variable.set(selected)
+        self.check_layout()
+
+    def check_layout(self):
+        try:
+            roles = cabinet.resolve(self.selected_layout(), self.screens)
+        except ValueError as exc:
+            self.cabinet_hint.configure(text=str(exc))
+        else:
+            lcd = roles.get("lcd")
+            if lcd:
+                text = f"The Stern LCD will run borderless fullscreen on Screen {lcd['n']}."
+                if lcd["primary"] and "playfield" not in roles:
+                    text += " It can cover VPX if the playfield is also on that screen."
+            else:
+                text = "The Stern LCD will run in a window."
+            self.cabinet_hint.configure(text=text)
+
+    def refresh_screens(self):
+        layout = self.selected_layout()
+        self.screens = padisplay.monitors()
+        self.set_screen_choices(layout)
+
+    def single_screen(self):
+        self.set_screen_choices({"lcd": cabinet.WINDOWED_LCD})
+
+    def identify_screens(self):
+        self.refresh_screens()
+        self.show_screens([(monitor, f"Screen {monitor['n']}") for monitor in self.screens])
+
+    def test_layout(self):
+        self.refresh_screens()
+        try:
+            roles = cabinet.resolve(self.selected_layout(), self.screens)
+        except ValueError as exc:
+            messagebox.showerror("Test layout", str(exc), parent=self.root)
+            return
+        primary = self.screens[0]
+        preview = []
+        for monitor in self.screens:
+            labels = [cabinet.ROLES[role] + (" · fullscreen" if role == "lcd" else "")
+                      for role, screen in roles.items() if screen == monitor]
+            if monitor == primary:
+                for role in ("playfield", "lcd"):
+                    if role not in roles:
+                        mode = "Windowed" if role == "lcd" else cabinet.DEFAULTS[role]
+                        labels.append(f"{cabinet.ROLES[role]} · {mode}")
+            if labels:
+                preview.append((monitor, "\n".join(labels)))
+        self.show_screens(preview)
+
+    def dismiss_screens(self, _event=None):
+        if self.overlay_timer:
+            self.root.after_cancel(self.overlay_timer)
+            self.overlay_timer = None
+        for overlay in self.overlays:
+            overlay.destroy()
+        self.overlays.clear()
+
+    def show_screens(self, screens):
+        self.dismiss_screens()
+        for screen, label in screens:
+            overlay = tk.Toplevel(self.root)
+            overlay.withdraw()
+            overlay.overrideredirect(True)
+            overlay.attributes("-topmost", True)
+            overlay.configure(background="#142b46")
+            tk.Label(overlay, text=label, font=("Segoe UI", 22, "bold"),
+                     foreground="white", background="#142b46").pack(expand=True)
+            tk.Label(overlay, text="Click to close", foreground="#d8e5f3",
+                     background="#142b46").pack(pady=(0, 12))
+            overlay.bind("<Button-1>", self.dismiss_screens)
+            overlay.bind("<Escape>", self.dismiss_screens)
+            width, height = min(430, screen["w"]), min(180, screen["h"])
+            overlay.geometry(f"{width}x{height}")
+            overlay.deiconify()
+            overlay.update_idletasks()
+            x = screen["x"] + (screen["w"] - width) // 2
+            y = screen["y"] + (screen["h"] - height) // 2
+            self.position_preview(overlay, x, y)
+            self.overlays.append(overlay)
+        self.overlay_timer = self.root.after(6000, self.dismiss_screens)
+
+    @staticmethod
+    def position_preview(overlay, x, y):
+        if os.name != "nt":
+            overlay.geometry(f"+{x}+{y}")
+            return
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetAncestor.restype = ctypes.c_void_p
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        hwnd = user32.GetAncestor(ctypes.c_void_p(overlay.winfo_id()), 2)
+        previous = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+        try:
+            user32.SetWindowPos(ctypes.c_void_p(hwnd), None, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010)
+        finally:
+            if previous:
+                user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous))
+
     def build_settings(self):
         page = self.settings_page
         page.columnconfigure(1, weight=1)
         settings = self.setup.settings
-        show_monitor = settings.get("lcd_monitor")
-        monitors = padisplay.monitors()
-        choices = {"Windowed · last position": 0}
-        choices.update({f"Full screen · Monitor {m['n']} ({m['w']} × {m['h']})": m["n"] for m in monitors})
-        self.monitor_choices = choices
-        self.monitor = tk.StringVar(value=next((name for name, number in choices.items()
-                                                if number == show_monitor), next(iter(choices))))
         volume = settings.get("volume", 100)
         self.volume = tk.IntVar(value=volume if isinstance(volume, int) and 0 <= volume <= 100 else 100)
         self.cache = tk.BooleanVar(value=padlaunch.cache_on())
-        ttk.Label(page, text="LCD placement", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=10)
-        ttk.Combobox(page, textvariable=self.monitor, values=list(choices),
-                     state="readonly", width=40).grid(row=0, column=1, sticky="w", padx=16)
+        ttk.Button(page, text="Cabinet display setup…",
+                   command=lambda: self.tabs.select(self.cabinet_page)).grid(row=0, column=0, sticky="w", pady=10)
         ttk.Label(page, text="Game volume", style="Section.TLabel").grid(row=1, column=0, sticky="w", pady=10)
         ttk.Spinbox(page, textvariable=self.volume, from_=0, to=100, width=6).grid(
             row=1, column=1, sticky="w", padx=16)
@@ -259,27 +428,61 @@ class PlayerWindow:
 
     def update_buttons(self):
         image = self.ready("wsl", "runtime")
+        has_table = self.game and self.game.table and Path(self.game.table).is_file()
         states = (
             (self.image_button, image), (self.folder_button, image),
             (self.table_button, self.game is not None),
             (self.remove_button, self.game is not None and self.game in self.saved),
-            (self.play_button, self.game is not None and bool(self.game.table) and self.ready(*ROWS)),
+            (self.play_button, True),
+            (self.backglass_button, has_table and not Path(self.game.table).with_suffix(".directb2s").is_file()),
+            (self.export_button, has_table and self.ready(*ROWS) and Path(self.game.image).is_file()),
             (self.primary, self.next_step(self.checks)), (self.refresh, True),
-            (self.browse, True), (self.save_options, True),
+            (self.browse, True), (self.save_options, True), (self.save_cabinet, True),
         )
         for button, enabled in states:
             button.state(["!disabled"] if enabled and not self.busy else ["disabled"])
-        if not image:
-            hint = "Complete WSL and runtime setup to inspect an image."
-        elif not self.game:
-            hint = "Choose an SD-card image to identify its game."
-        elif not self.game.table:
-            hint = "Choose a compatible original or prepared VPX table."
-        elif not self.ready(*ROWS):
-            hint = "Complete the remaining checks in Setup before playing."
+        label, self.game_action, hint = self.game_step()
+        self.play_button.configure(text=label)
+        if label == "Import image…":
+            self.image_button.pack_forget()
         else:
-            hint = "The game will start first. Close VPX to end the run."
+            self.image_button.pack(side="left", before=self.folder_button, padx=(0, 8))
+        if label == "Choose table…":
+            self.table_button.pack_forget()
+        else:
+            self.table_button.pack(side="left", before=self.backglass_button)
         self.play_hint.configure(text=hint)
+        vpx = self.checks.get("vpx")
+        self.vpx_hint.configure(text=vpx.detail.split(" · ", 1)[0]
+                                if vpx and vpx.state == "Ready" else "Requires Visual Pinball X 10.8+ x64")
+
+    def game_step(self):
+        if not self.ready("wsl", "runtime"):
+            return "Open Setup", lambda: self.tabs.select(self.setup_page), "Set up WSL and the SPIKE 2 runtime."
+        if not self.game:
+            return "Import image…", self.choose_image, "Get an SD-card image from Stern, then import the file."
+        if not Path(self.game.image).is_file():
+            repair = lambda: self.choose_image(expected=self.game)
+            return "Locate image…", repair, "The saved image is missing. Locate it to restore this pairing."
+        if not self.game.table or not Path(self.game.table).is_file():
+            hint = ("The saved VPX table is missing. Choose it again." if self.game.table else
+                    "Use Supported Tables to find a compatible release for this edition.")
+            return "Choose table…", self.choose_table, hint
+        if not self.ready(*ROWS):
+            return "Open Setup", lambda: self.tabs.select(self.setup_page), "Complete the remaining setup checks."
+        try:
+            warnings = self.player.preflight(self.game)
+        except ValueError as exc:
+            return "Review cabinet layout", lambda: self.tabs.select(self.cabinet_page), str(exc)
+        return "Play", self.play, "\n".join(warnings) or "Close VPX to end the game."
+
+    def next_game_step(self):
+        self.game_action()
+
+    def tab_changed(self, _event):
+        if self.tabs.select() == str(self.cabinet_page):
+            self.refresh_screens()
+        self.update_buttons()
 
     def reload_library(self, select=None):
         self.saved = self.player.library()
@@ -316,7 +519,7 @@ class PlayerWindow:
     def show_game(self, game):
         self.game = game
         self.game_title.configure(text=game.name if game else "Add a game")
-        image = game.image if game else "Choose a SPIKE 2 .raw file or its folder."
+        image = game.image if game else "Import a SPIKE 2 .raw image, a ZIP containing one image, or a folder."
         if game and self.cache_note:
             image += "\n" + self.cache_note
         self.image_text.configure(text=image)
@@ -431,11 +634,15 @@ class PlayerWindow:
 
         self.start(work, self.show_checks, "Checking the selected VPX installation…")
 
-    def choose_image(self):
+    def choose_image(self, expected=None):
         path = filedialog.askopenfilename(parent=self.root, title="Choose a SPIKE 2 image",
-                                          filetypes=[("SPIKE 2 SD-card image", "*.raw"), ("All files", "*.*")])
+                                          filetypes=[("SD-card images and ZIP archives", "*.raw *.zip"),
+                                                     ("All files", "*.*")])
         if path:
-            self.load_image(path)
+            self.load_image(path, expected)
+
+    def get_image(self):
+        webbrowser.open(STERN_IMAGES)
 
     def choose_folder(self):
         folder = filedialog.askdirectory(parent=self.root, title="Choose an SD-card image folder")
@@ -490,15 +697,23 @@ class PlayerWindow:
         choices.focus_set()
         dialog.grab_set()
 
-    def load_image(self, path):
+    def load_image(self, path, expected=None):
+        def work():
+            image, note = self.player.prepare_image(path, expected)
+            if expected and expected in self.saved:
+                image = self.player.relink_image(expected, image)
+            return image, note
+
         def done(result):
             image, self.cache_note = result
-            saved = next((row for row in self.saved if row.title == image.title and
+            saved = next((row for row in self.player.library() if row.title == image.title and
                           Path(row.image) == Path(image.image)), None)
             self.reload_library(saved or image)
             self.summary.configure(text=f"{image.name} · image verified.")
 
-        self.start(lambda: self.player.prepare_image(path), done, "Inspecting the SD-card image…")
+        message = "Extracting and inspecting the SD-card image…" if Path(path).suffix.casefold() == ".zip" else (
+            "Inspecting the SD-card image…")
+        self.start(work, done, message)
 
     def choose_table(self):
         game = self.game
@@ -520,16 +735,69 @@ class PlayerWindow:
 
     def play(self):
         game = self.game
+        try:
+            warnings = self.player.preflight(game)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Before playing", str(exc), parent=self.root)
+            self.update_buttons()
+            return
+        if warnings and not messagebox.askokcancel("Backglass setup", "\n".join(warnings) +
+                                                  "\n\nContinue playing?", parent=self.root):
+            return
+
+        def done(code):
+            if code:
+                text = f"VPX exited with code {code}. Open logs in Settings for details."
+                self.summary.configure(text=text)
+                messagebox.showerror("Visual Pinball X", text, parent=self.root)
+            else:
+                self.summary.configure(text="Game ended. The runtime has stopped.")
+
         self.start(lambda: self.player.play(game, self.report),
-                   lambda _: self.summary.configure(text="Game ended. The runtime has been stopped."),
-                   f"Starting {game.name}…")
+                   done, f"Starting {game.name}…")
+
+    def attach_backglass(self):
+        game = self.game
+        path = filedialog.askopenfilename(parent=self.root, title="Choose a backglass for this table",
+                                          filetypes=[("B2S backglass", "*.directb2s")])
+        if path:
+            self.start(lambda: self.player.attach_backglass(game, path),
+                       lambda _: self.summary.configure(text="Backglass attached to the prepared table."),
+                       "Checking the backglass file…")
+
+    def export_game(self):
+        game = self.game
+        path = filedialog.asksaveasfilename(parent=self.root, title="Export a front-end launch script",
+                                           defaultextension=".bat", initialfile=f"{game.name}.bat",
+                                           filetypes=[("Windows launch script", "*.bat *.cmd")])
+        if not path:
+            return
+
+        def done(warnings):
+            text = "Set the game’s Application Path in LaunchBox to this script. It waits until VPX closes."
+            if warnings:
+                text += "\n\n" + "\n".join(warnings)
+            self.summary.configure(text=f"Exported {Path(path).name}.")
+            messagebox.showinfo("Launch script exported", text, parent=self.root)
+
+        self.start(lambda: self.player.export(game, path), done, "Validating and exporting the pairing…")
+
+    def save_layout(self):
+        self.refresh_screens()
+        try:
+            self.player.save_layout(self.selected_layout(), self.screens)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Save display layout", str(exc), parent=self.root)
+        else:
+            self.summary.configure(text="Cabinet display layout saved.")
+        self.update_buttons()
 
     def save_settings(self):
         try:
             volume = self.volume.get()
             if not 0 <= volume <= 100:
                 raise ValueError("Enter a game volume from 0 to 100.")
-            self.player.save_preferences(self.monitor_choices[self.monitor.get()], volume, self.cache.get())
+            self.player.save_preferences(volume, self.cache.get())
         except (OSError, ValueError, tk.TclError) as exc:
             messagebox.showerror("Save settings", str(exc), parent=self.root)
         else:

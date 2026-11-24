@@ -28,17 +28,41 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 ```
 
 Browse **Supported Tables** to find the table version for your game and open
-its download page where one is listed. In **Games**, choose an image or folder.
-The app identifies the title from the
-card's contents and checks space for the optional cache. Choose a compatible
+its download page where one is listed. In **Games**, **Get image from Stern**
+opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
+containing one `.raw`, or select a folder of raw images. The app reads the
+title and edition from the image and checks space for the optional cache.
+Choose a compatible
 VPX table to make a playable copy, or use an existing prepared table. Prepared
 pairings appear in the game library. Select **Play** to start the game and
 open VPX. Closing VPX stops the run and returns to the library.
 
 The runtime builds the guest filesystem from a card on its first run and
 opens the source image read-only. The PowerShell launcher also accepts
-`-VpxExe` and `-Distro` overrides. Manage LCD placement, game volume, and card
-caching in **Settings**.
+`-VpxExe` and `-Distro` overrides. Manage game volume and card caching in
+**Settings**.
+
+## Cabinet displays and front ends
+
+Open **Cabinet** and select **Identify screens**. Assign the VPX playfield,
+B2S backglass, and Stern LCD to separate screens, or start with the
+**Single-screen preset**. Select **Test layout** to preview the assignments
+before saving. Use VPX windowed mode for app-managed playfield placement.
+The Stern LCD defaults to borderless fullscreen on a spare secondary screen.
+Select a specific screen under **Stern LCD** to choose where it fills the
+display, or select **Windowed** to share a screen with VPX.
+The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
+
+A managed backglass needs 64-bit B2S Server and a matching `.directb2s`
+file. The app carries over a matching file when it patches a table. Use
+**Attach backglass** if you downloaded it separately. A custom table
+`.res` file takes precedence over the app's backglass placement.
+
+In **Games**, select a prepared game and choose **Export launch script**.
+For LaunchBox, use the exported `.bat` as the game's **Application Path**
+and leave emulator selection off. The script uses the current SPIKE 2 VPX
+settings and stays running until VPX closes. Export again after moving
+the app, table, or image to a different path.
 
 ## Build and test
 

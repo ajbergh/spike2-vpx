@@ -58,20 +58,32 @@ def monitors():
         except Exception:                                   # noqa: BLE001
             pass
 
-    class MONITORINFO(ctypes.Structure):
+    class MONITORINFOEX(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * 32)]
+
+    class DISPLAY_DEVICE(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("name", wintypes.WCHAR * 32),
+                    ("description", wintypes.WCHAR * 128), ("flags", wintypes.DWORD),
+                    ("device_id", wintypes.WCHAR * 128), ("key", wintypes.WCHAR * 128)]
     found = []
     proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
                               ctypes.POINTER(wintypes.RECT), ctypes.c_void_p)
 
     def cb(hmon, _hdc, _rect, _data):
-        mi = MONITORINFO()
-        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        mi = MONITORINFOEX()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEX)
         if u.GetMonitorInfoW(ctypes.c_void_p(hmon), ctypes.byref(mi)):
             r = mi.rcMonitor
+            device = DISPLAY_DEVICE()
+            device.cb = ctypes.sizeof(DISPLAY_DEVICE)
+            u.EnumDisplayDevicesW(mi.szDevice, 0, ctypes.byref(device), 1)
+            display_number = mi.szDevice.rsplit("DISPLAY", 1)[-1]
             found.append({"x": r.left, "y": r.top, "w": r.right - r.left,
-                          "h": r.bottom - r.top, "primary": bool(mi.dwFlags & 1)})
+                          "h": r.bottom - r.top, "primary": bool(mi.dwFlags & 1),
+                          "device": device.device_id or mi.szDevice,
+                          "display_number": int(display_number) if display_number.isdecimal() else None})
         return 1
     u.EnumDisplayMonitors(None, None, proc(cb), None)
     if old:
