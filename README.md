@@ -1,8 +1,16 @@
-# SPIKE 2 VPX
+# ![SPIKE 2 VPX](assets/readme-banner.svg)
 
 Play Stern SPIKE 2 games with Visual Pinball X on Windows x64. VPX runs the
 playfield and the SPIKE 2 runtime runs the game, LCD, and audio. The bundled
 `PAD.Controller` connects them.
+
+## Credits
+
+This project is based on the work of **David Vanderburgh**. All credit to
+David Vanderburgh for making this possible. Visit his repository for the full
+functionality. [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
+
+No Stern or game code is shipped in this repo.
 
 ## Set up
 

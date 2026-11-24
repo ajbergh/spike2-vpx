@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="336" viewBox="0 0 1280 336"
+     role="img" aria-labelledby="title description">
+  <title id="title">SPIKE 2 VPX</title>
+  <desc id="description">Mint and navy S2V branding beside a stylized pinball playfield.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2=".55">
+      <stop stop-color="#101923"/>
+      <stop offset=".54" stop-color="#152635"/>
+      <stop offset="1" stop-color="#09141e"/>
+    </linearGradient>
+    <linearGradient id="mint" x2="0" y2="1">
+      <stop stop-color="#baf8e8"/>
+      <stop offset="1" stop-color="#72dec5"/>
+    </linearGradient>
+    <linearGradient id="badge" x2="0" y2="1">
+      <stop stop-color="#263b4d"/>
+      <stop offset="1" stop-color="#111d2a"/>
+    </linearGradient>
+    <linearGradient id="playfield" x2=".65" y2="1">
+      <stop stop-color="#162b3a"/>
+      <stop offset="1" stop-color="#0c1a25"/>
+    </linearGradient>
+    <radialGradient id="light">
+      <stop stop-color="#6ddcc3" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#6ddcc3" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ball" cx=".31" cy=".25" r=".78">
+      <stop stop-color="#fff"/>
+      <stop offset=".3" stop-color="#d2f8ef"/>
+      <stop offset=".65" stop-color="#85b8b9"/>
+      <stop offset="1" stop-color="#345766"/>
+    </radialGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0v24" fill="none" stroke="#97dddf" stroke-opacity=".09"/>
+    </pattern>
+    <clipPath id="frame">
+      <rect width="1280" height="336" rx="24"/>
+    </clipPath>
+    <clipPath id="table">
+      <path d="M44 472 12 112C7 60 39 22 92 18h168c56 0 87 38 82 94l-32 360Z"/>
+    </clipPath>
+    <g id="bumper">
+      <circle r="39" fill="#315767" stroke="#70d9c1" stroke-opacity=".45" stroke-width="1.5"/>
+      <circle r="33" fill="#122530" stroke="#376277" stroke-width="4"/>
+      <circle r="24" fill="#1d4952" stroke="#94efda" stroke-width="2"/>
+      <path d="M-15-7a17 17 0 0 1 23-8" fill="none" stroke="#e5fff8"
+            stroke-linecap="round" stroke-width="2"/>
+      <circle r="6" fill="#9ef1dc"/>
+      <path d="M0-37v7m0 60v7m-37-37h7m60 0h7" stroke="#a3d5d5" stroke-opacity=".6"/>
+    </g>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="336" fill="url(#background)"/>
+    <ellipse cx="1032" cy="142" rx="350" ry="270" fill="url(#light)"/>
+    <path d="M0 295h670l50-50h82m-140 64h69l42-41h51M534 26h172l40 40h79m-113-54 37 37h75"
+          fill="none" stroke="#7ebfc0" stroke-opacity=".18"/>
+    <path d="M0 295h178m63 0h89m368-46 23-23h42m10-160h44" fill="none"
+          stroke="#79ddc5" stroke-opacity=".48" stroke-width="2"/>
+    <g fill="#7cddc8" fill-opacity=".65">
+      <circle cx="178" cy="295" r="2"/>
+      <circle cx="330" cy="295" r="2"/>
+      <circle cx="763" cy="226" r="2"/>
+    </g>
+
+    <!-- An original playfield schematic, cropped by the banner frame. -->
+    <g transform="translate(858 -64) rotate(15 176 232)">
+      <path d="M44 472 12 112C7 60 39 22 92 18h168c56 0 87 38 82 94l-32 360Z"
+            fill="#08131d" stroke="#080f16" stroke-width="26"/>
+      <g clip-path="url(#table)">
+        <path fill="url(#playfield)" d="M0 0h360v480H0z"/>
+        <path fill="url(#grid)" d="M0 0h360v480H0z"/>
+        <path d="M71 476 37 117C32 69 55 42 99 41h148c49 0 74 25 68 73l-34 362"
+              fill="none" stroke="#5c9da4" stroke-opacity=".65" stroke-width="2"/>
+        <path d="M86 466 54 122c-4-44 13-60 50-62h130c46 0 65 17 61 55l-28 351"
+              fill="none" stroke="#45878c" stroke-opacity=".45"/>
+        <path d="M280 167l24-26 7-62m-253 61 19 29-7 42m13 105 42 40v62m148-102-43 40v62"
+              fill="none" stroke="#6caaa9" stroke-width="2"/>
+        <path d="m91 271 50 53-45-10Zm170 0-50 53 45-10Z" fill="#2b4d59" stroke="#63a9a7"/>
+        <path d="m101 290 21 22-19-4Zm150 0-21 22 19-4Z" fill="#75d7c3" opacity=".75"/>
+        <path d="M77 238h45m109 0h47M162 74v40m13-49v40m13-31v40"
+              fill="none" stroke="#77bdb7" stroke-opacity=".45"/>
+        <use href="#bumper" transform="translate(112 139) scale(.88)"/>
+        <use href="#bumper" transform="translate(229 127) scale(1.08)"/>
+        <use href="#bumper" transform="translate(173 211) scale(.94)"/>
+        <path d="M123 358c77 9 152-64 147-132-1-21-12-40-35-57"
+              fill="none" stroke="#85e7cc" stroke-opacity=".8" stroke-width="2"
+              stroke-linecap="round" stroke-dasharray="3 8"/>
+        <circle cx="235" cy="169" r="33" fill="url(#light)"/>
+        <circle cx="235" cy="169" r="10" fill="url(#ball)" stroke="#d0f5ec"/>
+        <g stroke-linecap="round">
+          <path d="m111 351 44 15m85-15-44 15" stroke="#09121b" stroke-width="21"/>
+          <path d="m111 351 44 15m85-15-44 15" stroke="#78ddc5" stroke-width="15"/>
+          <path d="m111 349 41 14m88-14-41 14" stroke="#c5fff0" stroke-width="2.5"/>
+        </g>
+      </g>
+      <path d="M44 472 12 112C7 60 39 22 92 18h168c56 0 87 38 82 94l-32 360"
+            fill="none" stroke="#517582" stroke-width="3"/>
+    </g>
+
+    <!-- The S2V monogram and display lettering are drawn as paths. -->
+    <g transform="translate(72 49)">
+      <rect x=".75" y=".75" width="75.5" height="75.5" rx="13"
+            fill="url(#badge)" stroke="#739fa7" stroke-width="1.5"/>
+      <g transform="scale(.3)" fill="url(#mint)">
+        <path d="M33 72h49v18H40l-4 5v18l4 6h29l13 13v39l-13 13H19v-18h43l4-5v-19l-4-5H33l-14-13V85Z"/>
+        <path d="M105 72h38l13 13v30l-47 51h49v18H89v-21l50-55V96l-6-6h-22l-5 6v9H89V85Z"/>
+        <path d="M162 72h19l20 83 19-83h19l-28 112h-20Z"/>
+      </g>
+    </g>
+    <g transform="translate(72 150)">
+      <g fill="#f2fafb">
+        <path d="M11 0h49v14H17l-3 3v14l3 3h32l11 11v22L49 78H0V64h43l3-3V50l-3-3H11L0 36V11Z"/>
+        <path fill-rule="evenodd" d="M71 0h50l12 12v29l-12 12H86v25H71Zm15 14v25h29l3-3V17l-3-3Z"/>
+        <path d="M143 0h33v13h-9v52h9v13h-33V65h9V13h-9Z"/>
+        <path d="M187 0h15v32h10l23-32h18l-28 38 30 40h-19l-24-32h-10v32h-15Z"/>
+        <path d="M264 0h55v14h-40v18h34v14h-34v18h40v14h-55Z"/>
+        <path d="M356 0h35l11 11v19l-42 34h43v14h-63V64l47-40v-7l-3-3h-23l-5 4v7h-15V14Z"/>
+      </g>
+      <g fill="url(#mint)">
+        <path d="M426 0h16l17 58 17-58h16l-25 78h-16Z"/>
+        <path fill-rule="evenodd" d="M502 0h50l12 12v29l-12 12h-35v25h-15Zm15 14v25h29l3-3V17l-3-3Z"/>
+        <path d="M571 0h18l17 26 17-26h17l-25 38 27 40h-18l-19-29-19 29h-17l27-40Z"/>
+      </g>
+    </g>
+    <text x="74" y="267" fill="#bed1db" font-family="Segoe UI, Arial, sans-serif" font-size="23"
+          font-weight="500" letter-spacing=".55">Stern SPIKE 2 games in Visual Pinball X</text>
+  </g>
+  <rect x=".75" y=".75" width="1278.5" height="334.5" rx="23.25" fill="none"
+        stroke="#4e717c" stroke-opacity=".7" stroke-width="1.5"/>
+</svg>
