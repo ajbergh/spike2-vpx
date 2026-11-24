@@ -285,7 +285,10 @@ class Player:
             "catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
         )
         encoded = b64encode(command.encode("utf-16-le")).decode("ascii")
-        script = ("@echo off\nsetlocal DisableDelayedExpansion\n"
+        script = ("@echo off\n"
+                  "rem WSL may stay running after VPX closes. Leave it running between games.\n"
+                  f"rem When done playing, run wsl --terminate {DISTRO} in PowerShell to free WSL memory.\n"
+                  "setlocal DisableDelayedExpansion\n"
                   '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
                   f"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}\n"
                   "exit /b %errorlevel%\n")
