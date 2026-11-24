@@ -89,6 +89,77 @@ that title in the runtime's rig slots. The PowerShell launcher also accepts
 `-VpxExe` and `-Distro` overrides. Manage game volume and card caching in
 **Settings**.
 
+## Supported VPX tables
+
+Use the VPX release listed for your Stern SD-card edition. Some download
+pages default to a newer release, so check their version history. The app's
+**Supported Tables** tab lists the releases targeted by the
+[bundled VPX maps](tools/spike2_emu/vpx).
+
+The **Expression lighting** column shows outputs documented in at least one
+build of that title. Support can vary by SD-card edition and software version.
+**Unverified** means the project has no confirmed lighting result for that
+entry. The **Lighting** tab checks your image for blades, speakers, and topper
+separately at startup. [Device-table lighting survey](tools/spike2_emu/cablights.py)
+
+| Stern game | SD-card edition | VPX release | Expression lighting |
+| --- | --- | --- | --- |
+| Aerosmith | Pro | [Aerosmith (Original 2021) 1.01](https://vpuniverse.com/files/file/13403-aerosmith-pro-sterntribute-2017-v102zip-with-vr/?changelog=3668) | Unverified |
+| Batman ’66 | Batman ’66 (`batman`) | [Batman 66 1.1.0](https://vpuniverse.com/files/file/6868-batman-66-stern-tribute/) | Unverified |
+| The Beatles | The Beatles (`beatles`) | [The Beatles (Original 2018) v007](https://orbitalpin.com/downloads/) | Unverified |
+| Black Knight: Sword of Rage | LE | [Black Knight Sword Of Rage LE](https://vpuniverse.com/files/file/32118-black-knight-sword-of-rage-stern-2019/) | Unverified |
+| Deadpool | Pro | [JP’s Deadpool 6.10](https://www.vpforums.org/index.php?app=downloads&showfile=15967) | Topper |
+| Foo Fighters | Pro, LE | [JP’s Foo Fighters 0.5.0](https://www.vpforums.org/index.php?app=downloads&showfile=19519) | Speakers |
+| Godzilla | LE | [Godzilla Limited Edition v2.6](https://vpuniverse.com/files/file/8449-godzilla-limited-edition/) | Topper |
+| Guardians of the Galaxy | Pro, LE | [Guardians of the Galaxy 2.1.1](https://vpuniverse.com/files/file/6127-guardians-of-the-galaxy/) | Unverified |
+| Iron Maiden: Legacy of the Beast | LE | [Iron Maiden (Original 2022) VPW 1.0.12](https://vpuniverse.com/files/file/12603-iron-maiden-legacy-of-the-beast-original-2022-vpw/) | Unverified |
+| James Bond 007 | Pro, LE | [BOND for Visual Pinball X 4.3](https://vpuniverse.com/files/file/11827-bond-60-th/) | Unverified |
+| JAWS | LE | [JAWS 50th Anniversary 3.2](https://vpuniverse.com/files/file/25943-jaws_50th_anniversary/) | Unverified |
+| John Wick | Pro, LE | [John Wick 3.0](https://vpuniverse.com/files/file/32204-john-wick-legend/) | Blades |
+| Jurassic Park | Pro, LE | [Jurassic Park Pro Le 4.02](https://vpuniverse.com/files/file/20502-jurassic-park-pro-le/) or [Jurassic Park 30TH LE Tribute 2.0](https://vpuniverse.com/files/file/20485-jurassic-park-30th-le-stern-2023-tribute/) | Unverified |
+| Metallica Remastered | SPIKE 2 (`metallica_spike`) | [Metallica Premium Monsters VPW 2.0.2](https://vpuniverse.com/files/file/6058-metallica-premium-monsters-stern-2013-vpw-mod/) | Blades |
+| The Munsters | Pro | [Munsters (Original 2020) 1.05](https://vpuniverse.com/files/file/10068-munsters-original-2020-105vpx/) or [The Munsters Pro MOD 1.0.0](https://vpuniverse.com/files/file/33195-the-munsters-prooriginal-2020-mod/) | Unverified |
+| Rush | LE | [Rush LE Tribute 2.0.2](https://vpuniverse.com/files/file/32514-rush-le-tribute-20/) | Blades, speakers |
+| Star Wars (2017) | Pro | Llyrric’s Stern-layout build dated July 13, 2025. [Author’s beta thread](https://vpuniverse.com/forums/topic/6988-star-wars-2017-stern-inspired/page/2/) | Topper |
+| Teenage Mutant Ninja Turtles | Pro | [Teenage Mutant Ninja Turtles (Stern–Data East mash-up) v2.86d](https://vpuniverse.com/files/file/22296-teenage-mutant-ninja-turtles-stern-data-east-remix-v286-table/) | Unverified |
+
+### SPIKE 2 games with no known public VPX table
+
+As of November 24, 2026, these titles had no public VPX table located for
+their Stern playfield. The Home Edition games have their own layouts.
+[SPIKE 2 game list](https://www.pinwiki.com/wiki/index.php/Stern_SPIKE%E2%84%A2_System_Repair#SPIKE_2)
+
+- Avengers: Infinity Quest
+- Dungeons & Dragons: The Tyrant’s Eye
+- Heavy Metal
+- Jurassic Park Home Edition
+- King Kong: Myth of Terror Island
+- Led Zeppelin ([a same-theme VPX original exists](https://vpuniverse.com/files/file/5940-led-zeppelin-pinball/))
+- Star Wars Home Edition (2019)
+- The Uncanny X-Men
+- Venom
+
+Public VPX projects also exist for the following titles. This project has no
+bundled maps for those releases.
+
+- Elvira’s House of Horrors ([Elvira VPX mash-up](https://vpuniverse.com/files/file/26714-elvira-mash-up-blood-red-kiss-edition/))
+- Stranger Things ([community VPX release](https://vpuniverse.com/files/file/25396-stranger-things/))
+- The Mandalorian ([community VPX release](https://vpuniverse.com/files/file/16087-the-mandalorian/))
+
+## Cabinet lighting
+
+Stern Expression Lighting has been tested on a physical cabinet with a
+DOF-compatible Teensy strip controller. In **Lighting**, detect or browse to
+your DOF `Cabinet.xml`. Assign the detected fixtures, use **Test fixture** to
+check their colors and direction, and enable **Use Stern expression lighting
+in SPIKE 2 games**. The optional **Use speaker lighting when blade data is
+unavailable** setting mirrors the game’s speaker pattern to any assigned
+blade that lacks its own data. Select **Save lighting** to apply the setup.
+
+SPIKE 2 VPX claims the Teensy during the game and clears and releases it when
+VPX closes. Ordinary VPX sessions can then drive the strips through DOF using
+the same cabinet configuration.
+
 ## Cabinet displays and front ends
 
 Open **Cabinet** and select **Identify screens**. Assign the VPX playfield,
