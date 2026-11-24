@@ -37,6 +37,10 @@ VPX table to make a playable copy, or use an existing prepared table. Prepared
 pairings appear in the game library. Select **Play** to start the game and
 open VPX. Closing VPX stops the run and returns to the library.
 
+VPX opens directly in play mode with the editor hidden. With the bundled
+controller, the table starts loading as soon as the launcher finds its Stern
+session, while the emulator is still starting.
+
 The runtime builds the guest filesystem from a card on its first run and
 opens the source image read-only. The PowerShell launcher also accepts
 `-VpxExe` and `-Distro` overrides. Manage game volume and card caching in
@@ -63,6 +67,40 @@ For LaunchBox, use the exported `.bat` as the game's **Application Path**
 and leave emulator selection off. The script uses the current SPIKE 2 VPX
 settings and stays running until VPX closes. Export again after moving
 the app, table, or image to a different path.
+
+## Library and maintenance
+
+In **Games**, use the library cards to see which editions are ready and which
+need an image, table, or setup. The detail view shows the matched VPX release
+and an SD image version when its filename has one. **Show details** reveals
+paths and logs. Add favorites and optional local PNG or GIF artwork, and use
+**Recently played** to find games you launched.
+
+The app includes small PNG previews in `assets/backglasses/`. Add a PNG
+named for a title's detected ID, such as `godzilla_le.png`, to bundle a
+preview for that title. Use artwork you can redistribute. The app previews the
+main image in the matching local `.directb2s` beside a prepared table. A
+player's custom artwork takes priority. If the backglass has no usable
+image, the app uses the bundled title preview or `default.png`.
+
+Press **F11** for the fullscreen cabinet library. Use Up/Down or cabinet
+flippers mapped to the left/right Shift keys, Enter or Space to select, and
+Esc to leave. In **Cabinet**, choose **Desktop** or **Cabinet** and save your
+screen assignments to that profile. **Load profile** applies a saved layout.
+**Test layout** outlines the assigned screens. **Test speakers** plays a tone
+using the current volume and the Windows default output.
+
+If playback fails, the launch screen shows the last stage reached and a next
+action. **Recover session** appears after the app verifies a stale record with
+an expired heartbeat and no live processes in its slot. Active or unverifiable
+sessions must be closed before retrying.
+
+In **Settings**, **Preview support report** shows the exact text you can save
+as a diagnostic ZIP. **Back up library** stores your pairings, artwork paths,
+favorites, play history, display profiles, and preferences as JSON. Copy your
+image, table, and artwork files separately when moving to another PC. After
+restoring, use **Locate image** or **Locate table** for files that moved and
+verify the display assignments on the new PC.
 
 ## Build and test
 

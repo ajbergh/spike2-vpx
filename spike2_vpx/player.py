@@ -21,9 +21,10 @@ import padisplay
 import padlaunch
 import padvpx
 import play_spike2
-from spike2_vpx import cabinet, runtime, sessions
+from spike2_vpx import cabinet, runtime, sessions, support
 
 STERN_IMAGES = "https://www.sternpinball.com/support/sd-cards/"
+BACKGLASS_ART = APP / "assets" / "backglasses"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,14 @@ class SupportedTable:
     table: str
     author: str
     url: str
+
+
+def artwork_paths(game):
+    if game.artwork:
+        yield game.artwork
+    if re.fullmatch(r"[a-z0-9_-]+", game.title):
+        yield BACKGLASS_ART / f"{game.title}.png"
+    yield BACKGLASS_ART / "default.png"
 
 
 def image_version(name):
@@ -118,7 +127,17 @@ class Player:
         return updated
 
     def record_played(self, game):
-        self.update_game(game, last_played=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        # A front-end launch may stay open while the desktop edits the library.
+        try:
+            latest = json.loads(self.setup.settings_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            latest = None
+        if isinstance(latest, dict):
+            self.setup.settings = latest
+        stored = next((row for row in self.library()
+                       if (row.title, row.image, row.table) == (game.title, game.image, game.table)), None)
+        if stored:
+            self.update_game(stored, last_played=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     def table_release(self, game):
         if game.table_release:
@@ -139,7 +158,8 @@ class Player:
         if image.title != previous.title:
             raise ValueError(f"Choose an SD-card image for {previous.name}.")
         game = replace(previous, image=image.image, image_version=image.image_version)
-        games = [row for row in self.library() if row not in (previous, game)]
+        games = [row for row in self.library() if row != previous and
+                 (row.title, Path(row.image)) != (game.title, Path(game.image))]
         self.setup.settings["games"] = [asdict(game), *(asdict(row) for row in games)]
         self.setup.save()
         return game
@@ -327,7 +347,7 @@ class Player:
         if exe is None or self.setup.check_vpx().state != "Ready":
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
         progress("Checking files", False)
-        play_spike2.check_controller()
+        overlap = play_spike2.check_controller()
         if self.inspect_image(game.image).title != game.title:
             raise ValueError("The image now contains a different title. Select the image again.")
         table = file_of_type(game.table, ".vpx")
@@ -352,8 +372,8 @@ class Player:
             started = started or playing
             progress(message, playing)
 
-        result = play_spike2.play(launch, exe.resolve(), table, timeout, progress=report)
-        if started and game in self.library():
+        result = play_spike2.play(launch, exe.resolve(), table, timeout, progress=report, overlap=overlap)
+        if started:
             try:
                 self.record_played(game)
             except OSError:
@@ -377,9 +397,29 @@ class Player:
         self.setup.save()
 
     def save_preferences(self, volume, cache):
-        temporary = self.audio_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"gain": volume / 100, "muted": volume == 0}), encoding="utf-8")
-        temporary.replace(self.audio_path)
+        support.atomic_write(self.audio_path, json.dumps({"gain": volume / 100, "muted": volume == 0}).encode("utf-8"))
         padlaunch.set_cache_on(cache)
         self.setup.settings["volume"] = volume
         self.setup.save()
+
+    def restore(self, data):
+        previous = self.setup.settings.copy()
+        old_audio = self.audio_path.read_bytes() if self.audio_path.exists() else None
+        old_cache = padlaunch.cache_on()
+        preferences = data["preferences"]
+        portable = support.backup(previous, old_cache)["preferences"]
+        self.setup.settings = {**{key: value for key, value in previous.items() if key not in portable},
+                               **preferences}
+        try:
+            self.save_preferences(preferences.get("volume", 100), data["card_cache"])
+        except OSError:
+            self.setup.settings = previous
+            try:
+                if old_audio is None:
+                    self.audio_path.unlink(missing_ok=True)
+                else:
+                    support.atomic_write(self.audio_path, old_audio)
+                padlaunch.set_cache_on(old_cache)
+            except OSError:
+                self.setup.log.exception("Could not restore preferences after a failed backup import")
+            raise

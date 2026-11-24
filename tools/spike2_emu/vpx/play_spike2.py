@@ -61,6 +61,23 @@ def check_controller():
         raise RuntimeError("Register PAD.Controller with the VPX kit before launching.") from exc
     if not server:
         raise RuntimeError("PAD.Controller has no registered COM server.")
+    # A checkout can be launched against an older registered controller.
+    # Only overlap startup when the actual COM server supports waiting for us.
+    if not padcontroller.pythoncom:
+        return False
+    import win32com.client
+
+    com = padcontroller.pythoncom
+    com.CoInitialize()
+    controller = None
+    try:
+        controller = win32com.client.Dispatch("PAD.Controller", clsctx=com.CLSCTX_LOCAL_SERVER)
+        return controller.PadExternalStartup is True
+    except (AttributeError, com.com_error):
+        return False
+    finally:
+        del controller
+        com.CoUninitialize()
 
 
 def card_in_folder(folder, native_title):
@@ -77,36 +94,61 @@ def card_in_folder(folder, native_title):
     raise ValueError(f"No game executable or .raw image in {folder}. Pass a prepared SD image with -Card.")
 
 
-def wait_for_game(launch, timeout):
-    deadline = time.monotonic() + timeout
+def startup_error(launch):
+    problem = "Stern runtime did not become ready" if launch.alive() else "Stern runtime exited during startup"
+    return RuntimeError(f"{problem}. See {launch.logfile}")
+
+
+def wait_for_rig(launch, deadline):
     while launch.alive() and time.monotonic() < deadline:
         record = padcontroller.Rig.board_slot(launch.slot)
         if record and record.get("label") == launch.label:
             if record.get("game") != launch.title:
                 raise RuntimeError("The rig started a different title from the table's map.")
-            rig = padcontroller.Rig(launch.title, record=record)
-            if padcontroller.block_in_wsl(rig, timeout=5):
-                return rig
+            return padcontroller.Rig(launch.title, record=record)
+        time.sleep(0.2)
+    raise startup_error(launch)
+
+
+def wait_for_game(launch, rig, deadline, player=None):
+    while launch.alive() and time.monotonic() < deadline:
+        if player is not None and player.poll() is not None:
+            return False
+        if padcontroller.block_in_wsl(rig, timeout=min(5, max(0.1, deadline - time.monotonic()))):
+            return True
         time.sleep(0.5)
-    problem = "Stern runtime did not become ready" if launch.alive() else "Stern runtime exited during startup"
-    raise RuntimeError(f"{problem}. See {launch.logfile}")
+    if player is not None and player.poll() is not None:
+        return False
+    raise startup_error(launch)
 
 
-def play(launch, exe, table, timeout, progress=None):
+def play(launch, exe, table, timeout, progress=None, *, overlap=False):
     # COM can discover the run from the board independently of VPX's environment.
     if padcontroller.Rig.board_run(launch.title):
         raise RuntimeError(f"Close the existing {launch.title} rig before starting this table.")
     try:
         launch.start()
+        deadline = time.monotonic() + timeout
+        rig = wait_for_rig(launch, deadline)
+        overlap = overlap and rig.prepared_launch
         if progress:
             progress("Connecting controller", False)
-        rig = wait_for_game(launch, timeout)
+        if not overlap:
+            wait_for_game(launch, rig, deadline)
         env = dict(os.environ, PAD_WSL_DISTRO=rig.distro, PAD_ROOT_WSL=rig.root,
                    PAD_SLOT=str(launch.slot), PAD_VPX_LINK="1")
         if progress:
             progress("Opening VPX", False)
-        with subprocess.Popen([str(exe), "-play", str(table)], cwd=exe.parent,
+        with subprocess.Popen([str(exe), "-ExtMinimized", "-play", str(table)], cwd=exe.parent,
                               env=env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP) as vpx:
+            if overlap:
+                try:
+                    if not wait_for_game(launch, rig, deadline, vpx):
+                        return vpx.returncode
+                except BaseException:
+                    if vpx.poll() is None:
+                        vpx.terminate()
+                    raise
             if progress:
                 progress("Playing in Visual Pinball X", True)
             while True:
@@ -166,7 +208,7 @@ def main():
         if not re.fullmatch(r"[A-Za-z0-9_-]+", native_title):
             raise ValueError(f"Invalid native SPIKE 2 game name in the map for {title}.")
         exe = resolve_vpx(args.vpx_exe)
-        check_controller()
+        overlap = check_controller()
 
         distro = args.distro or padlaunch.distro()
         card = args.card
@@ -193,7 +235,7 @@ def main():
                 raise RuntimeError(f"WSL could not access an executable at {game_dir}/game. {detail}".strip())
         launch = padlaunch.Launch(title, str(card) if card else None, dist=distro, minutes=0,
                                   game_dir=game_dir, prepared=True)
-        return play(launch, exe, table, args.startup_timeout)
+        return play(launch, exe, table, args.startup_timeout, overlap=overlap)
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, RuntimeError, ImportError, subprocess.SubprocessError) as exc:

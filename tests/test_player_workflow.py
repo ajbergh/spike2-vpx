@@ -1,7 +1,11 @@
+from base64 import b64encode
 import os
 from pathlib import Path
 from subprocess import CompletedProcess, run
+import sys
+import time
 from unittest.mock import Mock
+import wave
 from zipfile import ZipFile
 
 import pytest
@@ -24,6 +28,50 @@ def test_catalog_lists_bundled_table_versions_for_supported_game_editions():
     assert godzilla.url.startswith("https://")
     assert {"Foo Fighters LE", "Foo Fighters Pro"} <= {row.game for row in rows}
     assert "Turtles LE" not in {row.game for row in rows}
+
+
+def test_backglass_artwork_prefers_local_art_then_title_and_default(tmp_path):
+    from spike2_vpx.player import artwork_paths
+
+    override = str(tmp_path / "custom.png")
+    custom, title, default = artwork_paths(Game("godzilla_le", "card.raw", artwork=override))
+    assert custom == override
+    for path, expected in ((title, "godzilla_le.png"), (default, "default.png")):
+        assert path.name == expected
+        assert path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert list(artwork_paths(Game("../outside", "card.raw"))) == [default]
+
+
+def test_directb2s_preview_uses_only_the_matching_main_image(tmp_path):
+    from spike2_vpx import backglass
+    from spike2_vpx.player import BACKGLASS_ART
+
+    table = tmp_path / "Godzilla (PAD).vpx"
+    table.touch()
+    unrelated = tmp_path / "Original.directb2s"
+    unrelated.touch()
+    assert backglass.preview_key(table) is None
+    companion = table.with_suffix(".directb2s")
+    png = (BACKGLASS_ART / "godzilla_le.png").read_bytes()
+    encoded = b64encode(png).decode("ascii")
+    companion.write_text(f'<DirectB2SData><Images><DMDImage Value="ignore"/>'
+                         f'<BackglassImage Value="{encoded}"/></Images></DirectB2SData>')
+    key = backglass.preview_key(table)
+    assert backglass.thumbnail(key) == png
+    companion.write_text('<DirectB2SData><Images><BackglassImage Value="bad!"/></Images></DirectB2SData>')
+    changed = backglass.preview_key(table)
+    assert changed != key
+    assert backglass.thumbnail(changed) == b""
+
+
+def test_directb2s_preview_rejects_xml_entities(tmp_path):
+    from spike2_vpx import backglass
+
+    table = tmp_path / "Table.vpx"
+    table.with_suffix(".directb2s").write_text(
+        '<!DOCTYPE DirectB2SData [<!ENTITY art "aGVsbG8=">]>'
+        '<DirectB2SData><Images><BackglassImage Value="&art;"/></Images></DirectB2SData>')
+    assert backglass.thumbnail(backglass.preview_key(table)) == b""
 
 
 def test_image_title_comes_from_the_content_probe(player, tmp_path, monkeypatch):
@@ -225,6 +273,110 @@ def test_moved_image_can_restore_the_saved_pairing(player, tmp_path):
     game = player.relink_image(old, Game("godzilla_le", str(tmp_path / "new.raw")))
     assert player.library() == [game]
     assert game.table == old.table
+
+
+def test_recovery_requires_an_expired_owned_record_and_no_live_processes(player, monkeypatch):
+    from spike2_vpx import sessions
+
+    board = player.setup.data / "rig-board"
+    board.mkdir()
+    record = board / "slot-2.run"
+    record.write_text('{"emu":"spike2","distro":"SPIKE2-VPX","game":"godzilla_le",'
+                      '"label":"PAD-VPX-320","slot":2,"pid":92}')
+    stale = time.time() - 300
+    probe = Mock(return_value=CompletedProcess([], 0, b"0\n", b""))
+    monkeypatch.setattr(sessions, "run", probe)
+    monkeypatch.setattr(sessions.padpath, "to_wsl", lambda *_: "/rig")
+    with pytest.raises(RuntimeError, match="active or its status"):
+        sessions.check_available(player.setup, "godzilla_le")
+    probe.assert_not_called()
+    os.utime(record, (stale, stale))
+    probe.side_effect = [CompletedProcess([], 0, b"", b""), CompletedProcess([], 0, b"1", b"")]
+    with pytest.raises(RuntimeError, match="active or its status"):
+        sessions.check_available(player.setup, "godzilla_le")
+    assert record.is_file()
+    probe.side_effect = None
+    with pytest.raises(sessions.StaleSession, match="Recover"):
+        sessions.check_available(player.setup, "godzilla_le")
+    sessions.recover(player.setup, "godzilla_le")
+    assert not record.exists()
+    assert ("PAD_SLOT=2" in probe.call_args.args[0])
+    sessions.check_available(player.setup, "godzilla_le")
+
+
+def test_recovery_refuses_records_owned_by_another_distribution(player, monkeypatch):
+    from spike2_vpx import sessions
+
+    board = player.setup.data / "rig-board"
+    board.mkdir()
+    record = board / "slot-2.run"
+    record.write_text('{"emu":"spike2","distro":"Debian","game":"godzilla_le",'
+                      '"label":"PAD-VPX-320","slot":2,"pid":92}')
+    with pytest.raises(RuntimeError, match="recovery scope"):
+        sessions.recover(player.setup, "godzilla_le")
+    assert record.is_file()
+
+
+def test_game_metadata_and_backup_round_trip_without_machine_registration(player, tmp_path, monkeypatch):
+    from spike2_vpx import support
+    from spike2_vpx import player as module
+
+    original = Game("godzilla_le", str(tmp_path / "godzilla_le-1_16_0.raw"),
+                    str(tmp_path / "Godzilla limited edition (PAD).vpx"))
+    player.save(original)
+    updated = player.update_game(original, favorite=True, artwork=str(tmp_path / "cover.png"))
+    player.record_played(updated)
+    assert player.library()[0].last_played
+    assert player.table_release(updated) == "Godzilla Limited Edition v2.6"
+    assert module.image_version(original.image) == "1.16.0"
+    player.setup.settings.update(display_profiles={"Desktop": {"lcd": "windowed"}, "Cabinet": {}},
+                                 display_profile="Desktop", volume=55, restart_boot="machine-only")
+    path = tmp_path / "backup.json"
+    support.atomic_write(path, module.json.dumps(support.backup(player.setup.settings, False)).encode())
+    data = support.read_backup(path)
+    assert "restart_boot" not in data["preferences"]
+    player.setup.settings["games"] = []
+    cache_set = Mock()
+    monkeypatch.setattr(module.padlaunch, "set_cache_on", cache_set)
+    player.restore(data)
+    assert player.library()[0].favorite
+    assert player.setup.settings["volume"] == 55
+    assert player.setup.settings["restart_boot"] == "machine-only"
+    assert player.profiles()["Desktop"] == {"lcd": "windowed"}
+    cache_set.assert_called_once_with(False)
+
+
+def test_support_zip_exports_the_preview_without_raw_logs(player, tmp_path):
+    from spike2_vpx import support
+    from spike2_vpx_setup import Check
+
+    player.log_path.write_text("Normal start\nERROR opening C:\\Users\\example\\table.vpx\n")
+    preview = support.report(player.setup, {"vpx": Check("Ready", "VPX 10.8.0 · local")})
+    assert "VPX 10.8.0" in preview
+    assert "ERROR opening [path removed]" in preview
+    assert "example" not in preview and "Normal start" not in preview
+    path = tmp_path / "support.zip"
+    support.write_report(path, preview)
+    with ZipFile(path) as bundle:
+        assert bundle.namelist() == ["support-report.txt"]
+        assert bundle.read(bundle.namelist()[0]).decode() == preview
+
+
+def test_audio_test_sends_a_bounded_tone_to_the_windows_default_output(monkeypatch):
+    from spike2_vpx import support
+
+    used = []
+
+    def play(path, flags):
+        assert flags == 3
+        used.append(Path(path))
+        with wave.open(path, "rb") as audio:
+            assert (audio.getnchannels(), audio.getframerate(), audio.getnframes()) == (1, 16000, 8000)
+            assert any(audio.readframes(8000))
+
+    monkeypatch.setitem(sys.modules, "winsound", Mock(PlaySound=play, SND_FILENAME=1, SND_NODEFAULT=2))
+    support.test_tone(50)
+    assert len(used) == 1 and not used[0].exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows batch launcher")

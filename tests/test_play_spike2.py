@@ -102,28 +102,98 @@ class PreparedLaunchTest(unittest.TestCase):
                          ["/home/pad/spike2root", "/mnt/c/Game Card.raw"])
         launch._start_watch.assert_called_once_with()
 
-    def test_vpx_starts_after_the_game_and_exit_releases_the_run(self):
+    def test_vpx_loads_while_stern_starts_and_exit_releases_the_run(self):
         calls = []
         launch = SimpleNamespace(title="godzilla_le", slot=2, start=lambda: calls.append("game"),
                                  stop=lambda: calls.append("stop"))
         exe = Path("VPX Install/VPinballX64.exe")
         table = Path("Tables/Godzilla (PAD).vpx")
-        rig = SimpleNamespace(distro="PAD-Runtime", root="/slots/2/root")
+        rig = SimpleNamespace(distro="PAD-Runtime", root="/slots/2/root", prepared_launch=True)
         proc = MagicMock()
         proc.__enter__.return_value.wait.side_effect = lambda: calls.append("wait VPX") or 0
 
         with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
+                patch.object(play, "wait_for_rig", side_effect=lambda *_: calls.append("rig") or rig), \
                 patch.object(play, "wait_for_game", side_effect=lambda *_: calls.append("ready") or rig), \
                 patch.object(play.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
-                patch.object(play.subprocess, "Popen", return_value=proc) as popen:
-            self.assertEqual(play.play(launch, exe, table, 30), 0)
-        self.assertEqual(calls, ["game", "ready", "wait VPX", "stop"])
-        self.assertEqual(popen.call_args.args, ([str(exe), "-play", str(table)],))
+                patch.object(play.subprocess, "Popen", side_effect=lambda *_a, **_k:
+                             calls.append("open VPX") or proc) as popen:
+            self.assertEqual(play.play(launch, exe, table, 30, overlap=True), 0)
+        self.assertEqual(calls, ["game", "rig", "open VPX", "ready", "wait VPX", "stop"])
+        self.assertEqual(popen.call_args.args, ([str(exe), "-ExtMinimized", "-play", str(table)],))
         env = popen.call_args.kwargs["env"]
         self.assertEqual(env["PAD_ROOT_WSL"], rig.root)
         self.assertEqual(env["PAD_SLOT"], "2")
         self.assertEqual(env["PAD_VPX_LINK"], "1")
         self.assertEqual(env["PAD_WSL_DISTRO"], rig.distro)
+
+    def test_older_controller_waits_for_emulator_before_starting_player(self):
+        launch = Mock(title="godzilla_le", slot=2)
+        rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/2/root", prepared_launch=True)
+        with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
+                patch.object(play, "wait_for_rig", return_value=rig), \
+                patch.object(play, "wait_for_game", side_effect=RuntimeError("boot failed")), \
+                patch.object(play.subprocess, "Popen") as popen, \
+                self.assertRaisesRegex(RuntimeError, "boot failed"):
+            play.play(launch, Path("VPinballX64.exe"), Path("table.vpx"), 30)
+        popen.assert_not_called()
+        launch.stop.assert_called_once_with()
+
+    def test_failed_emulator_during_overlap_closes_only_the_player_it_started(self):
+        launch = Mock(title="godzilla_le", slot=2)
+        rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/2/root", prepared_launch=True)
+        with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
+                patch.object(play, "wait_for_rig", return_value=rig), \
+                patch.object(play, "wait_for_game", side_effect=RuntimeError("boot failed")), \
+                patch.object(play.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+                patch.object(play.subprocess, "Popen") as popen, \
+                self.assertRaisesRegex(RuntimeError, "boot failed"):
+            proc = popen.return_value.__enter__.return_value
+            proc.poll.return_value = None
+            play.play(launch, Path("VPinballX64.exe"), Path("table.vpx"), 30, overlap=True)
+        proc.terminate.assert_called_once_with()
+        launch.stop.assert_called_once_with()
+
+    def test_closing_player_while_game_starts_skips_the_boot_wait(self):
+        launch = Mock(title="godzilla_le")
+        player = Mock()
+        player.poll.return_value = 0
+        with patch.object(play.padcontroller, "block_in_wsl") as probe:
+            self.assertFalse(play.wait_for_game(launch, object(), play.time.monotonic() + 30, player))
+        probe.assert_not_called()
+
+    def test_rig_wait_ignores_other_launchers_and_rejects_the_wrong_game(self):
+        launch = Mock(title="godzilla_le", slot=2, label="PAD-VPX-321")
+        foreign = {"game": "godzilla_le", "label": "PAD-VPX-456"}
+        wrong_title = {"game": "godzilla_pro", "label": "PAD-VPX-321"}
+        with patch.object(play.padcontroller.Rig, "board_slot", side_effect=[foreign, wrong_title]) as board, \
+                patch.object(play.time, "sleep"), self.assertRaisesRegex(RuntimeError, "different title"):
+            play.wait_for_rig(launch, play.time.monotonic() + 30)
+        self.assertEqual(board.call_count, 2)
+
+    def test_controller_waits_for_prepared_launcher_without_starting_another_game(self):
+        pc = play.padcontroller
+        bridge = pc.Bridge()
+        bridge.set_game("godzilla_le")
+        record = {"label": "PAD-VPX-321", "root": "/slots/2/root", "slot": 2,
+                  "game": bridge.native_title, "distro": "SPIKE2-VPX"}
+        with patch.dict(pc.os.environ, {"PAD_ROOT_WSL": ""}), \
+                patch.object(pc.Rig, "board_run", return_value=record), \
+                patch.object(pc, "read_block", return_value=None), \
+                patch.object(pc, "PlayerGrips"), \
+                patch.object(pc.threading, "Thread"), \
+                patch.object(pc.padlaunch, "Launch") as start, \
+                patch.object(pc.padlaunch, "card_for") as card:
+            bridge.run()
+        start.assert_not_called()
+        card.assert_not_called()
+        self.assertIsNone(bridge.launch)
+        self.assertEqual(bridge.external_start, record["label"])
+        block = b"test block"
+        with patch.object(pc, "SHARE_ON", True), patch.object(pc, "read_block", return_value=block), \
+                patch.object(bridge, "_rig_up", return_value=True), patch.object(bridge, "_attach") as attach:
+            bridge._poll_starting()
+        attach.assert_called_once_with(block)
 
     def test_failed_game_start_never_opens_vpx_and_cleans_up(self):
         launch = Mock(title="godzilla_le")

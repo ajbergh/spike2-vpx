@@ -678,13 +678,25 @@ class Rig:
         self.root = os.environ.get("PAD_ROOT_WSL")        # posix
         self.slot = padpath.slot()
         self.how = "environment"
-        if record or not self.root:
-            rec = record or self.board_run(title)
-            if rec:
-                self.distro = rec.get("distro") or self.distro
-                self.root = rec.get("root")
-                self.slot = rec.get("slot", 0)
-                self.how = "rig board slot %s (%s)" % (self.slot, rec.get("game"))
+        self.prepared_launch = False
+        self.label = ""
+        rec = record
+        if rec is None and not self.root:
+            rec = self.board_run(title)
+        if rec is None and self.root and self.slot:
+            candidate = self.board_slot(self.slot)
+            if candidate and candidate.get("root") == self.root and candidate.get("distro") == self.distro:
+                rec = candidate
+        if rec:
+            self.distro = rec.get("distro") or self.distro
+            self.root = rec.get("root")
+            self.slot = rec.get("slot", 0)
+            self.how = "rig board slot %s (%s)" % (self.slot, rec.get("game"))
+            label = rec.get("label")
+            if (title and rec.get("game") == title and self.root and self.distro
+                    and isinstance(label, str) and re.fullmatch(r"PAD-VPX-[0-9]+", label)):
+                self.prepared_launch = True
+                self.label = label
         if self.root and self.distro:
             self.dump = r"\\wsl.localhost\%s%s\dump" % (self.distro, self.root.replace("/", "\\"))
         elif self.root:
@@ -1977,6 +1989,7 @@ class Bridge:
         self.rig = None
         self.pipe = None
         self.launch = None                 # the run this bridge started, if any
+        self.external_start = ""
         self.attached = False              # the run is up and its tables read
         self.front_done = False            # the started run's LCD window was handed back once
         self.b2s_handed = set()            # ... and each backglass window, once (PAD-893)
@@ -2194,6 +2207,7 @@ class Bridge:
         on - switches before that are kept and handed over at attach (the
         table's trough, set once at its Init), Visual Pinball never waits."""
         self.rig = Rig(self.native_title)
+        self.external_start = self.rig.label if self.rig.prepared_launch else ""
         self.pipe = None
         self.launch = None
         self.attached = False
@@ -2215,6 +2229,8 @@ class Bridge:
         data = read_block(self.rig.led_path(), READ_N) if SHARE_ON else None
         if self._rig_up(data):
             self._attach(data)
+        elif self.external_start:
+            log(f"waiting for the launcher's {self.external_start} run")
         elif self._attach_unshared(data):
             pass
         else:
@@ -2294,7 +2310,7 @@ class Bridge:
         self.attached = True
         self.attached_t = time.monotonic()
         log("attached to %s after %.0f s" % (self.rig.how, time.monotonic() - self.start_t))
-        if self.launch is not None:
+        if self.launch is not None or self.external_start:
             self._boot_watch()
 
     #: PAD-1306: the longest a link poll goes without decoding the block
@@ -2554,8 +2570,14 @@ class Bridge:
                 self._attach(got[0], pipe=link)
                 return True
             if link.state == "down":
-                self._stop_stuck("the game is up inside WSL, and neither Windows' share "
-                                 "nor wsl.exe can reach it (%s)" % link.why)
+                if self.launch is None:
+                    # The launcher owns this run. Retry the link without stopping it.
+                    log(f"the launcher's link has not come up ({link.why})")
+                    self._unshared = None
+                    link.close()
+                else:
+                    self._stop_stuck("the game is up inside WSL, and neither Windows' share "
+                                     "nor wsl.exe can reach it (%s)" % link.why)
                 return True
             return False
         if (data is not None and SHARE_ON) or not self._can_go_unshared():
@@ -2601,9 +2623,9 @@ class Bridge:
 
     def _poll_starting(self):
         """Once a second until the run this bridge started is up."""
-        if self.launch is None:
+        if self.launch is None and not self.external_start:
             return
-        if self.rig is None:
+        if self.rig is None and self.launch is not None:
             rec = Rig.board_slot(self.launch.slot)
             if rec:
                 self.rig = Rig(self.native_title, record=rec)
@@ -2614,6 +2636,8 @@ class Bridge:
                 self._attach(data)
                 return
             if self._poll_unshared(data):
+                return
+            if self.launch is None:
                 return
             # PAD-1208: a game is up ~20 s after its board record; one whose
             # block never came said nothing here, and the table sat idle
@@ -2637,6 +2661,8 @@ class Bridge:
                     return
                 if seen and getattr(self, "_unshared", None) is None:
                     self._go_unshared()
+        if self.launch is None:
+            return
         if not self.launch.alive():
             # A board record can appear before the game is ready. It does
             # not make an exited launcher alive: clean the run we owned,
@@ -2864,7 +2890,7 @@ class Bridge:
                 self._place_player()
             if not self.attached:
                 self._poll_starting()
-                time.sleep(1.0)
+                time.sleep(0.25 if self.external_start else 1.0)
                 continue
             if self.boot is not None and now - getattr(self, "_boot_check", 0.0) >= 1.0:
                 self._boot_check = now
@@ -3241,7 +3267,7 @@ class Bridge:
 
     def _starting(self):
         """A run this bridge started that is not up yet, or only just."""
-        return self.launch is not None and (
+        return (self.launch is not None or bool(self.external_start)) and (
             not self.attached or not self.ready_t or time.monotonic() - self.ready_t < FRONT_SETTLE_S)
 
     def _hand_back_from(self, fg, title, pid=0):
@@ -3262,6 +3288,8 @@ class Bridge:
             return False
         if b2s_window(title):
             return fg not in self.b2s_handed
+        if self.external_start:
+            return (self.external_start + "]") in title and (self._starting() or not self.front_done)
         if self.launch is None:
             return False
         loading = getattr(self, "_loading", None)
@@ -3742,6 +3770,8 @@ class PadController:
             return 0
         if key == "padstatus":
             return json.dumps(b.status())
+        if key == "padexternalstartup":
+            return True
         # DOF (PAD-879): PADSPIKE2.vbs starts it before B2S.Server, sends the
         # script's own DOF calls through it, and finishes it with the table
         if key == "paddofinit":

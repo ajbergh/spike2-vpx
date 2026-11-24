@@ -8,6 +8,7 @@ import platform
 import re
 from math import pi, sin
 from struct import pack
+import sys
 from tempfile import NamedTemporaryFile
 import wave
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -49,7 +50,8 @@ def read_backup(path):
         data = json.loads(payload)
     except ValueError as exc:
         raise ValueError("Choose a SPIKE 2 VPX library backup in JSON format.") from exc
-    if not isinstance(data, dict) or data.get("format") != BACKUP_FORMAT or data.get("version") != 1:
+    if (not isinstance(data, dict) or data.get("format") != BACKUP_FORMAT
+            or type(data.get("version")) is not int or data["version"] != 1):
         raise ValueError("This SPIKE 2 VPX backup format is unsupported.")
     preferences = data.get("preferences")
     if not isinstance(preferences, dict) or type(data.get("card_cache")) is not bool:
@@ -84,7 +86,8 @@ def read_backup(path):
 
 
 def app_version():
-    if platform.system() == "Windows":
+    bundled = Path(__file__).resolve().parents[1] / "python"
+    if platform.system() == "Windows" and Path(sys.executable).resolve().parent == bundled:
         import winreg
         try:
             key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SPIKE2-VPX_is1"
@@ -101,12 +104,24 @@ def report(setup, checks):
              f"App version: {app_version()}", f"Runtime package version: {RUNTIME_VERSION}",
              f"Windows: {platform.version()}", f"Python: {platform.python_version()}", "", "Setup checks"]
     for key, check in checks.items():
-        lines.append(f"{key}: {check.state}")
+        version = re.search(r"\b(VPX|WSLg|runtime) ([0-9]+(?:\.[0-9]+)*)", check.detail)
+        lines.append(f"{key}: {check.state}" + (f" ({version[0]})" if version else ""))
     lines.extend(("", "Recent errors"))
-    for name in ("setup.log", "player.log", "controller-registration.log", "wsl-platform.log"):
+    directory = setup.log_path.parent
+    logs = [(name, directory / name) for name in ("setup.log", "player.log",
+                                                  "controller-registration.log", "wsl-platform.log")]
+    logs.append(("controller.log", directory / "play" / "controller.log"))
+    try:
+        recent = sorted((directory / "play").glob("padvpx-*.log"), key=lambda file: file.stat().st_mtime,
+                        reverse=True)[:2]
+    except OSError:
+        recent = []
+    logs.extend(("runtime log", file) for file in recent)
+    for name, path in logs:
         try:
-            with (setup.log_path.parent / name).open("rb") as file:
-                file.seek(max(0, file.seek(0, 2) - 32768))
+            with path.open("rb") as file:
+                size = file.seek(0, 2)
+                file.seek(max(0, size - 32768))
                 tail = file.read().decode("utf-8", errors="replace")
         except OSError:
             continue
@@ -115,6 +130,7 @@ def report(setup, checks):
         for line in errors[-10:]:
             line = re.sub(r"""["'][A-Za-z]:[\\/][^"']*["']|[A-Za-z]:[\\/].*|/mnt/[a-z]/.*|/home/.*|\\\\[^\s].*""",
                           "[path removed]", line)
+            line = re.sub(r"\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b", "[email removed]", line)
             lines.append(f"{name}: {line[:300]}")
     return "\n".join(lines) + "\n"
 
@@ -134,8 +150,12 @@ def test_tone(volume):
     try:
         with wave.open(str(path), "wb") as audio:
             audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
-            audio.writeframes(b"".join(pack("<h", int(6500 * volume / 100 *
-                min(i / 300, (7999 - i) / 300, 1) * sin(2 * pi * 523.25 * i / 16000))) for i in range(8000)))
+            samples = bytearray()
+            for i in range(8000):
+                envelope = min(i / 300, (7999 - i) / 300, 1)
+                sample = sin(2 * pi * 523.25 * i / 16000)
+                samples.extend(pack("<h", int(6500 * volume / 100 * envelope * sample)))
+            audio.writeframes(samples)
         winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_NODEFAULT)
     finally:
         path.unlink(missing_ok=True)

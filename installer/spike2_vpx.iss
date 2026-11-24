@@ -22,6 +22,7 @@ Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\installer\setup_spike2_wsl.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "{#PythonDir}\*"; DestDir: "{app}\python"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
 Source: "{#ProjectDir}\spike2_vpx\*.py"; DestDir: "{app}\spike2_vpx"; Flags: ignoreversion
+Source: "{#ProjectDir}\assets\backglasses\*.png"; DestDir: "{app}\assets\backglasses"; Flags: ignoreversion
 Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc,games\*,shots\*,*.log,*.raw"
 
 [Icons]

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 import json
+import os
+from pathlib import Path
 import re
 import subprocess
 import time
@@ -17,7 +19,7 @@ class StaleSession(RuntimeError):
 
 @dataclass(frozen=True)
 class Record:
-    path: object
+    path: Path
     contents: bytes
     changed: int
     slot: int
@@ -80,13 +82,15 @@ def recover(setup, title):
             raise RuntimeError("The session changed while recovering. Check the game again.")
         temporary = record.path.with_suffix(f".recover-{uuid4().hex}")
         record.path.rename(temporary)
-        try:
-            if not record.matches(temporary):
-                try:
+        if not record.matches(temporary):
+            try:
+                if os.name == "nt":
+                    temporary.rename(record.path)
+                else:
                     record.path.hardlink_to(temporary)
-                except FileExistsError:
-                    pass
-                raise RuntimeError("The session changed while recovering. Check the game again.")
-        finally:
-            temporary.unlink()
+            except FileExistsError:
+                pass
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("The session changed while recovering. Check the game again.")
+        temporary.unlink()
         setup.log.info("Recovered stale slot %s for %s", record.slot, title)
