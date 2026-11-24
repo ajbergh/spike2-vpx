@@ -22,6 +22,8 @@ import play_spike2
 
 LAUNCH_STAGES = ("Checking files", "Starting Stern", "Connecting controller", "Opening VPX")
 BACKGROUND, SURFACE, TEXT, MUTED, ACCENT = "#11151c", "#1b2330", "#edf2f7", "#acbbcd", "#79ddc5"
+LCD_FULLSCREEN_MODE = "Borderless fullscreen"
+LCD_WINDOWED_MODE = "Windowed"
 
 
 def configure_style(root):
@@ -448,6 +450,15 @@ class PlayerWindow:
         self.screen_boxes = {}
         self.screens = padisplay.monitors()
         for row, (role, label) in enumerate(cabinet.ROLES.items(), start=2):
+            if role == "lcd":
+                ttk.Label(page, text="Stern LCD mode").grid(row=row, column=0, sticky="w", pady=7)
+                self.lcd_mode = tk.StringVar()
+                mode = ttk.Combobox(page, textvariable=self.lcd_mode, state="readonly", width=42,
+                                    values=(LCD_FULLSCREEN_MODE, LCD_WINDOWED_MODE))
+                mode.grid(row=row, column=1, sticky="w", padx=16)
+                mode.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
+                row += 1
+                label = "Stern LCD screen"
             ttk.Label(page, text=label).grid(row=row, column=0, sticky="w", pady=7)
             self.screen_vars[role] = tk.StringVar()
             box = ttk.Combobox(page, textvariable=self.screen_vars[role], state="readonly", width=42)
@@ -455,25 +466,25 @@ class PlayerWindow:
             box.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
             self.screen_boxes[role] = box
         buttons = ttk.Frame(page)
-        buttons.grid(row=5, column=0, columnspan=2, sticky="w", pady=(16, 8))
+        buttons.grid(row=6, column=0, columnspan=2, sticky="w", pady=(16, 8))
         for label, action in (("Refresh screens", self.refresh_screens),
                               ("Identify screens", self.identify_screens),
                               ("Single-screen preset", self.single_screen),
                               ("Test layout", self.test_layout)):
             ttk.Button(buttons, text=label, command=action).pack(side="left", padx=(0, 8))
         self.save_cabinet = ttk.Button(page, text="Save display layout", command=self.save_layout)
-        self.save_cabinet.grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.save_cabinet.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.cabinet_hint = ttk.Label(page, style="Hint.TLabel", wraplength=620, justify="left")
-        self.cabinet_hint.grid(row=7, column=0, columnspan=2, sticky="w")
+        self.cabinet_hint.grid(row=8, column=0, columnspan=2, sticky="w")
         ttk.Label(page, text="Use VPX windowed mode when assigning a playfield screen. "
                   "A backglass needs 64-bit B2S Server and a matching .directb2s file.",
                   style="Hint.TLabel", wraplength=620, justify="left").grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
+            row=9, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Button(page, text="Get B2S Server", command=lambda: webbrowser.open(
             "https://github.com/vpinball/b2s-backglass/releases")).grid(
-            row=9, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
         profile_tools = ttk.Frame(page)
-        profile_tools.grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        profile_tools.grid(row=11, column=0, columnspan=2, sticky="w", pady=(10, 0))
         active = self.setup.settings.get("display_profile")
         self.profile = tk.StringVar(value=active if active in support.PROFILES else "Desktop")
         ttk.Label(profile_tools, text="Display profile").pack(side="left")
@@ -488,15 +499,18 @@ class PlayerWindow:
         self.set_screen_choices(self.player.layout(self.screens))
 
     def selected_layout(self):
-        return {role: self.screen_choices[role][variable.get()] for role, variable in self.screen_vars.items()
-                if self.screen_choices[role][variable.get()]}
+        layout = {role: self.screen_choices[role][variable.get()]
+                  for role, variable in self.screen_vars.items()}
+        if self.lcd_mode.get() == LCD_WINDOWED_MODE:
+            layout["lcd"] = cabinet.WINDOWED_LCD
+        return {role: key for role, key in layout.items() if key}
 
     def set_screen_choices(self, layout):
+        windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
+        self.lcd_mode.set(LCD_WINDOWED_MODE if windowed else LCD_FULLSCREEN_MODE)
         self.screen_choices = {}
         for role, variable in self.screen_vars.items():
             choices = {cabinet.DEFAULTS[role]: ""}
-            if role == "lcd":
-                choices["Windowed"] = cabinet.WINDOWED_LCD
             if role == "backglass":
                 choices["Disabled"] = cabinet.DISABLED_B2S
             for monitor in self.screens:
@@ -504,7 +518,7 @@ class PlayerWindow:
                 if monitor["primary"]:
                     name += " · primary"
                 choices[name] = cabinet.screen_key(monitor)
-            key = layout.get(role, "")
+            key = "" if role == "lcd" and windowed else layout.get(role, "")
             selected = next((label for label, value in choices.items() if value == key), None)
             if selected is None:
                 selected = "Saved screen · disconnected"
@@ -516,6 +530,8 @@ class PlayerWindow:
 
     def check_layout(self):
         layout = self.selected_layout()
+        windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
+        self.screen_boxes["lcd"].configure(state="disabled" if windowed else "readonly")
         try:
             roles = cabinet.resolve(layout, self.screens)
         except ValueError as exc:
@@ -526,8 +542,10 @@ class PlayerWindow:
                 text = f"The Stern LCD will run borderless fullscreen on {cabinet.screen_name(lcd)}."
                 if lcd["primary"] and "playfield" not in roles:
                     text += " It can cover VPX if the playfield is also on that screen."
-            else:
+            elif windowed:
                 text = "The Stern LCD will run in a window."
+            else:
+                text = "No spare screen is available. The Stern LCD will run in a window unless you pick a screen."
             if layout.get("backglass") == cabinet.DISABLED_B2S:
                 text += " B2S will stay off on the next launch."
             self.cabinet_hint.configure(text=text)

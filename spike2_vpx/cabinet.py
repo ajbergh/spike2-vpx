@@ -17,7 +17,7 @@ ROLES = {
 DEFAULTS = {
     "playfield": "VPX default",
     "backglass": "B2S default",
-    "lcd": "Automatic fullscreen",
+    "lcd": "Automatic (spare screen)",
 }
 WINDOWED_LCD = "windowed"
 DISABLED_B2S = "disabled"

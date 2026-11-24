@@ -95,10 +95,12 @@ Open **Cabinet** and select **Identify screens**. Assign the VPX playfield,
 B2S backglass, and Stern LCD to separate screens, or start with the
 **Single-screen preset**. Select **Test layout** to preview the assignments
 before saving. Use VPX windowed mode for app-managed playfield placement.
-The Stern LCD defaults to borderless fullscreen on a spare secondary screen.
-Select a specific screen under **Stern LCD** to choose where it fills the
-display, or select **Windowed** to share a screen with VPX. Windows places
-the fullscreen LCD using the same display coordinates as **Identify screens**.
+Under **Stern LCD mode**, choose **Borderless fullscreen** or **Windowed**,
+then select **Save display layout**. Borderless fullscreen uses the screen
+selected under **Stern LCD screen**. The **Automatic (spare screen)** default
+uses a spare secondary screen when available and opens a window otherwise.
+Windows places the fullscreen LCD using the same display coordinates as
+**Identify screens**.
 When the cabinet and Windows display numbers differ, Cabinet shows both.
 The renderer starts at the selected screen's size for fullscreen play.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
