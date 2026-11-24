@@ -1305,6 +1305,8 @@ class PlayerWindow:
 def main():
     root = tk.Tk()
     root.withdraw()
+    if os.name == "nt":
+        root.iconbitmap(default=str(Path(__file__).resolve().parent / "assets" / "spike2_vpx.ico"))
     try:
         setup = Setup()
         # A second setup window must not share an active download or import.

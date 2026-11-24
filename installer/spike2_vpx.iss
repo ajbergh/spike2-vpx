@@ -12,7 +12,8 @@ MinVersion=10.0.19044
 OutputBaseFilename=SPIKE2-VPX-Setup
 Compression=lzma2
 SolidCompression=yes
-UninstallDisplayIcon={app}\python\pythonw.exe
+SetupIconFile={#ProjectDir}\assets\spike2_vpx.ico
+UninstallDisplayIcon={app}\assets\spike2_vpx.ico
 
 [Files]
 Source: "{#ProjectDir}\Spike2Vpx.pyw"; DestDir: "{app}"; Flags: ignoreversion
@@ -22,11 +23,12 @@ Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\installer\setup_spike2_wsl.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "{#PythonDir}\*"; DestDir: "{app}\python"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
 Source: "{#ProjectDir}\spike2_vpx\*.py"; DestDir: "{app}\spike2_vpx"; Flags: ignoreversion
+Source: "{#ProjectDir}\assets\spike2_vpx.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#ProjectDir}\assets\backglasses\*.png"; DestDir: "{app}\assets\backglasses"; Flags: ignoreversion
 Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc,games\*,shots\*,*.log,*.raw"
 
 [Icons]
-Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"
+Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\spike2_vpx.ico"
 
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX"; Flags: postinstall nowait runasoriginaluser skipifsilent
