@@ -4,6 +4,28 @@ Play Stern SPIKE 2 games with Visual Pinball X on Windows x64. VPX runs the
 playfield and the SPIKE 2 runtime runs the game, LCD, and audio. The bundled
 `PAD.Controller` connects them.
 
+## Download for Windows
+
+### [Download SPIKE 2 VPX v0.1.0 for Windows x64](https://github.com/ajbergh/spike2-vpx/releases/download/v0.1.0/SPIKE2-VPX-Setup-0.1.0-x64.exe)
+
+[Release notes](https://github.com/ajbergh/spike2-vpx/releases/tag/v0.1.0) ·
+[SHA-256 checksum](https://github.com/ajbergh/spike2-vpx/releases/download/v0.1.0/SPIKE2-VPX-Setup-0.1.0-x64.exe.sha256) ·
+[Setup instructions](#set-up)
+
+Requires Windows 10 build 19044 or later (x64), WSL 2, and Visual Pinball X
+10.8 or later (x64). Bring your own Stern SPIKE 2 SD-card image and compatible
+VPX table.
+
+### What’s new in v0.1.0
+
+- The Windows launcher sets up a private WSL 2 runtime, imports SPIKE 2
+  images, and prepares and launches [supported VPX tables](#supported-vpx-tables).
+- Cabinet setup supports separate playfield, backglass, and Stern LCD displays,
+  saved display profiles, and launch scripts for front ends.
+- [Stern Expression Lighting](#cabinet-lighting) drives compatible Teensy LED
+  controllers. The Lighting tab shows which outputs each image provides and
+  can mirror speaker patterns onto blades when blade data is unavailable.
+
 ## Credits
 
 **SPIKE 2 VPX** is a heavily modified fork of
