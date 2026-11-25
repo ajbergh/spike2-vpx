@@ -228,6 +228,20 @@ verify the display assignments on the new PC.
 
 ## Build and test
 
+Use **Actions → Windows installer → Run workflow** to build an installer.
+Enter a version such as `0.1.0`. The workflow runs the tests, compiles the
+installer, and smoke-tests it by installing it on a Windows runner and
+loading the installed application with its bundled Python. Download the
+versioned x64 installer and its SHA-256 file from the workflow run's
+**Artifacts** section.
+
+Pushing a tag such as `v0.1.0` uses the tag as the installer version and
+attaches the tested installer and checksum to a draft GitHub Release.
+The installer is currently unsigned. Review the draft and publish it from
+**Releases** when ready.
+
+### Build locally
+
 Run `.\scripts\build-windows-installer.ps1` with full x64 Python with Tcl/Tk
 and Inno Setup 6.3 or later. The build writes
 `installer\Output\SPIKE2-VPX-Setup.exe`. The installer bundles the tools and

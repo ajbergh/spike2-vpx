@@ -1,0 +1,155 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version (for example 0.1.0)
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    outputs:
+      installer: ${{ steps.version.outputs.installer }}
+      artifact: ${{ steps.version.outputs.artifact }}
+    steps:
+      - name: Set installer version
+        id: version
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+              if ($env:GITHUB_REF_NAME -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+                  throw 'Use a release tag in the form vMAJOR.MINOR.PATCH.'
+              }
+              $version = $env:GITHUB_REF_NAME.Substring(1)
+          } else {
+              $version = $env:MANUAL_VERSION
+              if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+                  throw 'Enter a version in the form MAJOR.MINOR.PATCH.'
+              }
+          }
+          Add-Content $env:GITHUB_OUTPUT "version=$version"
+          Add-Content $env:GITHUB_OUTPUT "installer=SPIKE2-VPX-Setup-$version-x64.exe"
+          Add-Content $env:GITHUB_OUTPUT "artifact=SPIKE2-VPX-$version-Windows-x64"
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: x64
+
+      - name: Run tests
+        run: |
+          python -m pip install -r requirements-dev.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install test dependencies.' }
+          python -m pytest -q
+
+      - name: Compile installer
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          .\scripts\build-windows-installer.ps1 -AppVersion $env:APP_VERSION
+
+      - name: Smoke test the installed application
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $installer = (Get-Item -LiteralPath 'installer/Output/SPIKE2-VPX-Setup.exe').FullName
+          $target = Join-Path $env:RUNNER_TEMP 'SPIKE2 VPX installer smoke test'
+          $log = Join-Path $env:RUNNER_TEMP 'SPIKE2-VPX-install.log'
+          $setup = Start-Process -FilePath $installer -ArgumentList @(
+              '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+              "/DIR=`"$target`"", "/LOG=`"$log`""
+          ) -Wait -PassThru -WindowStyle Hidden
+          if ($setup.ExitCode -ne 0) {
+              if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 60 }
+              throw "Setup exited with code $($setup.ExitCode)."
+          }
+          Push-Location -LiteralPath $target
+          try {
+              & '.\python\python.exe' -c 'import runpy, sys, tkinter, win32file; runpy.run_path(sys.argv[1]); from spike2_vpx.support import app_version; tkinter.Tcl(); assert app_version() == sys.argv[2], app_version()' 'Spike2Vpx.pyw' $env:APP_VERSION
+              if ($LASTEXITCODE -ne 0) { throw 'The installed application failed its smoke test.' }
+          } finally {
+              Pop-Location
+          }
+
+      - name: Stage the installer and checksum
+        env:
+          INSTALLER_NAME: ${{ steps.version.outputs.installer }}
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $installer = Join-Path dist $env:INSTALLER_NAME
+          Copy-Item -LiteralPath 'installer/Output/SPIKE2-VPX-Setup.exe' -Destination $installer
+          $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$installer.sha256" -Value "$sha256  $env:INSTALLER_NAME`n" -Encoding ascii -NoNewline
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: dist
+          if-no-files-found: error
+          overwrite: true
+
+  draft-release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      - name: Attach the tested build to a draft release
+        shell: bash
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLER_NAME: ${{ needs.build.outputs.installer }}
+        run: |
+          checksum="$INSTALLER_NAME.sha256"
+          sha256sum --check --strict "$checksum"
+          args=(--repo "$GITHUB_REPOSITORY")
+          if release=$(gh release view "$GITHUB_REF_NAME" "${args[@]}" --json isDraft,assets); then
+            if [[ $(jq -r '.isDraft' <<< "$release") != true ]]; then
+              echo "Published release $GITHUB_REF_NAME already exists."
+              exit 0
+            fi
+            # Resume a partial upload only when the draft's existing bytes match.
+            missing=()
+            for file in "$INSTALLER_NAME" "$checksum"; do
+              digest=$(jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest // "unknown"' <<< "$release")
+              if [[ -z "$digest" ]]; then
+                missing+=("$file")
+              elif [[ "$digest" != "sha256:$(sha256sum "$file" | cut -d ' ' -f 1)" ]]; then
+                echo "::error::The draft already has a different $file. Review the draft assets before retrying."
+                exit 1
+              fi
+            done
+            if (( ${#missing[@]} )); then
+              gh release upload "$GITHUB_REF_NAME" "${missing[@]}" "${args[@]}"
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" "$INSTALLER_NAME" "$checksum" "${args[@]}" \
+              --draft --verify-tag --generate-notes --title "SPIKE 2 VPX $GITHUB_REF_NAME"
+          fi
