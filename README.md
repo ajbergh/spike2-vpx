@@ -16,7 +16,7 @@ Requires Windows 10 build 19044 or later (x64), WSL 2, and Visual Pinball X
 10.8 or later (x64). Bring your own Stern SPIKE 2 SD-card image and compatible
 VPX table.
 
-### What’s new in v0.1.0
+### Initial Release
 
 - The Windows launcher sets up a private WSL 2 runtime, imports SPIKE 2
   images, and prepares and launches [supported VPX tables](#supported-vpx-tables).
