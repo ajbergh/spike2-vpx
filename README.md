@@ -6,9 +6,12 @@ playfield and the SPIKE 2 runtime runs the game, LCD, and audio. The bundled
 
 ## Credits
 
-This project is based on the work of **David Vanderburgh**. All credit to
-David Vanderburgh for making this possible. Visit his repository for the full
-functionality. [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
+**SPIKE 2 VPX** is a heavily modified fork of
+[Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
+by **David Vanderburgh**, extended with a Windows launcher, WSL 2 setup, VPX
+table integration, cabinet display management, and expression lighting support.
+All credit to David Vanderburgh for the underlying decryption and SPIKE 2
+emulation foundation.
 
 No Stern or game code is shipped in this repo.
 
@@ -235,3 +238,9 @@ its pinned SHA-256. Uninstall preserves the private runtime and player data.
 python -m pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## License
+
+Licensed under the [MIT License](LICENSE). Original work Copyright (c) 2026
+David Vanderburgh; SPIKE 2 VPX modifications and additions Copyright (c) 2026
+Adam Bergh.
