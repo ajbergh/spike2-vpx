@@ -58,7 +58,8 @@ class LightingTests(unittest.TestCase):
         global_config = config / "GlobalConfig_B2SServer.xml"
         global_config.write_text("<GlobalConfig><CabinetConfigFilePattern>"
                                  "{GlobalConfigDir}/../cab*.xml</CabinetConfigFilePattern></GlobalConfig>")
-        self.assertEqual(lighting.detect([self.root]), self.path)
+        # The runner's TEMP can use an 8.3 alias. Detection returns the canonical path.
+        self.assertEqual(lighting.detect([self.root]), self.path.resolve())
         (self.root / "cab2.xml").write_text(CABINET)
         self.assertIsNone(lighting.detect([self.root]))
 
