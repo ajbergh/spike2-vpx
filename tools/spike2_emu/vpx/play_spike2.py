@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import padcontroller  # noqa: E402
 import padlaunch  # noqa: E402
 import padlighting  # noqa: E402
+import padstern  # noqa: E402
+import s1bridge  # noqa: E402
 import vpx_lcd  # noqa: E402
 
 
@@ -88,8 +90,11 @@ def check_controller():
         com.CoUninitialize()
 
 
-def card_in_folder(folder, native_title):
-    images = [path for path in folder.iterdir() if path.suffix.lower() == ".raw" and path.is_file()]
+def card_in_folder(folder, native_title, platform=None):
+    suffixes = {".raw"} if platform == "spike2" else padlaunch.IMAGE_SUFFIXES
+    if platform == "spike3":
+        suffixes = suffixes | {".zip"}
+    images = [path for path in folder.iterdir() if path.suffix.lower() in suffixes and path.is_file()]
     title = native_title.lower()
     matches = [path for path in images if path.stem.lower() == title
                or path.name.lower().startswith((title + "-", title + "."))]
@@ -98,8 +103,9 @@ def card_in_folder(folder, native_title):
         return candidates[0]
     if candidates:
         names = ", ".join(sorted(path.name for path in candidates))
-        raise ValueError(f"Multiple .raw images in {folder}: {names}. Choose one with -Card.")
-    raise ValueError(f"No game executable or .raw image in {folder}. Pass a prepared SD image with -Card.")
+        kind = ".raw images" if all(path.suffix.lower() == ".raw" for path in candidates) else "images"
+        raise ValueError(f"Multiple {kind} in {folder}: {names}. Choose one with -Card.")
+    raise ValueError(f"No game executable or card image in {folder}. Pass an image with -Card.")
 
 
 def startup_error(launch):
@@ -109,6 +115,14 @@ def startup_error(launch):
 
 def wait_for_rig(launch, deadline):
     while launch.alive() and time.monotonic() < deadline:
+        if isinstance(launch, padstern.SternLaunch):
+            record = launch.record()
+            if record:
+                if launch.platform == "spike1":
+                    return s1bridge.Rig(launch.title, record)
+                return padcontroller.Rig(launch.title, record, emu="spike3")
+            time.sleep(0.2)
+            continue
         record = padcontroller.Rig.board_slot(launch.slot)
         if record and record.get("label") == launch.label:
             if record.get("game") != launch.title:
@@ -122,7 +136,13 @@ def wait_for_game(launch, rig, deadline, player=None):
     while launch.alive() and time.monotonic() < deadline:
         if player is not None and player.poll() is not None:
             return False
-        if padcontroller.block_in_wsl(rig, timeout=min(5, max(0.1, deadline - time.monotonic()))):
+        if isinstance(launch, padstern.Spike1Launch):
+            ready = s1bridge.is_up(padcontroller.read_block(rig.led_path(), s1bridge.STATE_SIZE))
+        else:
+            ready = padcontroller.block_in_wsl(rig, timeout=min(5, max(0.1, deadline - time.monotonic())))
+            if ready and isinstance(launch, padstern.Spike3Launch):
+                ready = launch.ready()
+        if ready:
             return True
         time.sleep(0.5)
     if player is not None and player.poll() is not None:
@@ -147,6 +167,11 @@ def b2s_disabled_ini(exe, target):
 
 def lighting_sources(launch, rig, deadline):
     """Return active and discoverable sources after this run publishes its tables."""
+    if isinstance(launch, padstern.Spike3Launch):
+        try:
+            return read_lighting_sources(launch, rig.tables_dir(launch.title), True)
+        except OSError:
+            return {}, None
     until = min(deadline, time.monotonic() + 5)
     while launch.alive():
         try:
@@ -191,7 +216,8 @@ def read_lighting_sources(launch, tables, nodes_current, topper_off=None):
 def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b2s=False,
          lighting=None, lighting_report=None):
     # COM can discover the run from the board independently of VPX's environment.
-    if padcontroller.Rig.board_run(launch.title):
+    multi_generation = isinstance(launch, padstern.SternLaunch)
+    if not multi_generation and padcontroller.Rig.board_run(launch.title):
         raise RuntimeError(f"Close the existing {launch.title} rig before starting this table.")
     lighting = padlighting.settings(lighting)
     config = None
@@ -208,7 +234,7 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
             else:
                 print(message, file=sys.stderr, flush=True)
 
-    if lighting.get("enabled"):
+    if lighting.get("enabled") and not isinstance(launch, padstern.Spike1Launch):
         try:
             config = padlighting.prepare(lighting, padcontroller._dof_dirs(), table.parent)
         except (OSError, ValueError, TypeError, ParseError) as exc:
@@ -229,15 +255,17 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
         target = vpx_lcd.fullscreen_target()
         launch.windows_lcd = target
         launch.start()
-        if target:
+        if target and not isinstance(launch, padstern.Spike1Launch):
             cleanup.callback(vpx_lcd.Placement(launch, target).close)
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + (max(timeout, launch.first_boot_timeout) if multi_generation else timeout)
         rig = wait_for_rig(launch, deadline)
-        overlap = overlap and rig.prepared_launch
+        overlap = overlap and rig.prepared_launch and not multi_generation
         if progress:
             progress("Connecting controller", False)
         if not overlap or config:
             wait_for_game(launch, rig, deadline)
+        if isinstance(launch, padstern.Spike1Launch):
+            launch.open_display(rig, target)
         lights = link = None
         if config:
             controllers, mappings, brightness = config
@@ -304,7 +332,7 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
                     if vpx.poll() is None:
                         vpx.terminate()
                     raise
-            if lighting_report and not config:
+            if lighting_report and not config and not isinstance(launch, padstern.Spike1Launch):
                 _, available = lighting_sources(launch, rig, deadline)
                 report_lighting(available)
             if progress:
@@ -324,7 +352,14 @@ def play_app_game(title, card, table, timeout):
     setup = Setup()
     try:
         player = Player(setup)
-        game = Game(title, str(card), str(table))
+        saved = next((game for game in player.library()
+                      if game.title == title and Path(game.image) == card), None)
+        if saved:
+            game = Game(title, str(card), str(table), platform=saved.platform)
+        else:
+            map_title = read_title(table)
+            platform = padlaunch.map_platform(padlaunch.table_map(map_title))
+            game = Game(title, str(card), str(table), platform=platform)
         for warning in player.preflight(game):
             print(warning, file=sys.stderr, flush=True)
         return player.play(game, lambda message, _: print(message, flush=True), timeout)
@@ -337,7 +372,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--game-dir", help="Executable title directory, or Windows folder containing a .raw image")
-    source.add_argument("--card", type=Path, help="Prepared SPIKE 2 card image")
+    source.add_argument("--card", type=Path, help="Stern card image")
     parser.add_argument("--table", type=Path, required=True, help="PAD-patched .vpx file")
     parser.add_argument("--vpx-exe", type=Path, help="Override the installed VPX player")
     parser.add_argument("--distro", help="Override the prepared WSL distribution")
@@ -358,11 +393,12 @@ def main():
             raise ValueError("Pass a PAD-patched .vpx table.")
         title = read_title(table)
         mapping = padlaunch.table_map(title)
-        if not mapping or mapping.get("platform", "spike2") != "spike2":
-            raise ValueError(f"No SPIKE 2 map was found for {title}.")
+        if not mapping:
+            raise ValueError(f"No Stern table map was found for {title}.")
+        platform = padlaunch.map_platform(mapping)
         native_title = padlaunch.game_for(title)
         if not re.fullmatch(r"[A-Za-z0-9_-]+", native_title):
-            raise ValueError(f"Invalid native SPIKE 2 game name in the map for {title}.")
+            raise ValueError(f"Invalid native game name in the map for {title}.")
         exe = resolve_vpx(args.vpx_exe)
         overlap = check_controller()
 
@@ -376,21 +412,24 @@ def main():
             if (folder / "game").is_file():
                 game_dir = padlaunch.padpath.to_wsl(str(folder), distro)
             else:
-                card = card_in_folder(folder, native_title)
+                card = card_in_folder(folder, native_title, platform)
                 game_dir = None
         if card:
             card = card.resolve(strict=True)
-            if not card.is_file():
-                raise ValueError("-Card requires a prepared SPIKE 2 image file.")
+            suffixes = padlaunch.IMAGE_SUFFIXES | ({".zip"} if platform == "spike3" else set())
+            if not card.is_file() or card.suffix.lower() not in suffixes:
+                raise ValueError("-Card requires a Stern card image file.")
         else:
+            if platform != "spike2":
+                raise ValueError("Pass a card image with -Card for this table.")
             game_dir = game_dir.rstrip("/")
             probe = subprocess.run(padlaunch.wsl_head(distro) + ["-e", "test", "-x", game_dir + "/game"],
                                    capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
             if probe.returncode:
                 detail = padlaunch._text(probe.stderr).strip()
                 raise RuntimeError(f"WSL could not access an executable at {game_dir}/game. {detail}".strip())
-        launch = padlaunch.Launch(title, str(card) if card else None, dist=distro, minutes=0,
-                                  game_dir=game_dir, prepared=True)
+        launch = padlaunch.launch_for(platform, title, str(card) if card else None, dist=distro, minutes=0,
+                                     game_dir=game_dir, prepared=True)
         settings_path = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Spike2Vpx" / "setup.json"
         try:
             settings = padlighting.settings(json.loads(settings_path.read_text(encoding="utf-8")))

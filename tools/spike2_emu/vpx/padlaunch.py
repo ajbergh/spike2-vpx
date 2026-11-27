@@ -176,6 +176,15 @@ def _version_key(path):
 RUNTIME_DISTRO = "SPIKE2-VPX"
 
 
+PLATFORMS = {"spike1": "SPIKE 1", "spike2": "SPIKE 2", "spike3": "SPIKE 3"}
+IMAGE_SUFFIXES = frozenset({".raw", ".iso", ".img"})
+
+
+def map_platform(mapping):
+    name = mapping.get("platform") or "spike2"
+    return name.lower() if isinstance(name, str) else ""
+
+
 def table_map(title):
     """Map metadata in PAD.Controller's user/kit lookup order."""
     if title:
@@ -184,7 +193,7 @@ def table_map(title):
                 try:
                     with open(os.path.join(directory, title + suffix), encoding="utf-8") as f:
                         m = json.load(f)
-                    if isinstance(m, dict) and (m.get("platform") or "spike2").lower() == "spike2":
+                    if isinstance(m, dict) and map_platform(m) in PLATFORMS:
                         return m
                 except (OSError, ValueError):
                     pass
@@ -212,7 +221,7 @@ def game_for(title):
 
 
 def card_for(title, platform="spike2"):
-    """Find the SPIKE 2 card image for this title."""
+    """Find the card image for this title on its own platform."""
     env = os.environ.get("PAD_VPX_CARD")
     if env and os.path.isfile(env):
         return env
@@ -223,9 +232,11 @@ def card_for(title, platform="spike2"):
         if card and os.path.isfile(card):
             return card
     for lib in libraries(platform, kit):
-        pattern = "%s-*.sdcard.raw" % game.lower()
+        suffixes = {"spike1": (".iso", ".img", ".raw"), "spike2": (".sdcard.raw",),
+                    "spike3": (".sdcard-secure.raw", ".sdcard.raw", ".zip")}[platform]
+        patterns = [f"{game.lower()}-*{suffix}" for suffix in suffixes]
         found = [os.path.join(lib, name) for name in sorted(os.listdir(lib))
-                 if fnmatch.fnmatchcase(name.lower(), pattern)]
+                 if any(fnmatch.fnmatchcase(name.lower(), pattern) for pattern in patterns)]
         if found:
             # of one version, the stock Release build over a custom one beside
             # it (turtles_pro-1_59_0.1987-upscaled tied with the Release and
@@ -235,7 +246,7 @@ def card_for(title, platform="spike2"):
 
 
 def libraries(platform="spike2", kit=None):
-    """Return the configured SPIKE 2 card folders in search order."""
+    """Return the configured card folders in search order."""
     kit = kit_load() if kit is None else kit
     out = []
     env = os.environ.get("PAD_VPX_LIBRARY")
@@ -246,8 +257,16 @@ def libraries(platform="spike2", kit=None):
         out.append(per)
     lib = kit.get("library")
     if lib:
-        out.append(lib)
+        out.append(lib if platform == "spike2" else os.path.join(os.path.dirname(lib), platform))
     return [d for d in out if os.path.isdir(d)]
+
+
+def launch_for(platform, title, card, **options):
+    if platform == "spike2":
+        return Launch(title, card, **options)
+    from padstern import Spike1Launch, Spike3Launch
+
+    return {"spike1": Spike1Launch, "spike3": Spike3Launch}[platform](title, card, **options)
 
 
 def card_places(title, platform="spike2"):

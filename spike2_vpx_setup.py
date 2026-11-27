@@ -212,6 +212,8 @@ class Setup:
                          'command -v "$tool" >/dev/null || { echo "Missing $tool"; exit 1; }; done; '
                          'for file in hwshim.c rootfs.sh playaudio.sh lcdring.py padlink.py padpath.sh; do '
                          'test -r "$1/$file" || { echo "Cannot read $file"; exit 1; }; done; '
+                         'for file in spike1_emu/start.sh spike3_emu/s3launch.sh vpx_stern_session.sh rigboard.sh; do '
+                         'test -r "$1/../$file" || { echo "Cannot read $file"; exit 1; }; done; '
                          'python3 -B -c \'import runpy,sys; runpy.run_path(sys.argv[1])\' "$1/padlink.py"',
                          "setup", linux_rig)
         if probe.returncode:

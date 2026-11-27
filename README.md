@@ -29,8 +29,8 @@ VPX table.
 [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
 by **David Vanderburgh**, extended with a Windows launcher, WSL 2 setup, VPX
 table integration, cabinet display management, and expression lighting support.
-All credit to David Vanderburgh for the underlying decryption and SPIKE 2
-emulation foundation.
+The experimental SPIKE 1 and SPIKE 3 runtimes and VPX adapters are based on
+[Pinball Asset Decryptor v1.634.0](https://github.com/davidvanderburgh/pinball-asset-decryptor/commit/d9fae9ab6504f69eca1cf8432a3d88a4f7fcc6fc).
 
 No Stern or game code is shipped in this repo.
 
@@ -100,9 +100,9 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 
 Browse **Supported Tables** to find the table version for your game and open
 its download page where one is listed. In **Games**, **Get image from Stern**
-opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
-containing one `.raw`, or select a folder of raw images. The app reads the
-title and edition from the image and checks space for the optional cache.
+opens Stern's download page. Use **Import image** with a local card image or
+a ZIP containing one image, or select a folder of images. The app reads the
+title and edition from the image and checks space for the optional SPIKE 2 cache.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
 existing prepared table. The app saves new conversions and their companion
 files beside the original table. Prepared pairings appear in the game library.
@@ -120,6 +120,33 @@ first launch after upgrading imports any existing save data it finds for
 that title in the runtime's rig slots. The PowerShell launcher also accepts
 `-VpxExe` and `-Distro` overrides. Manage game volume and card caching in
 **Settings**.
+
+### Experimental SPIKE 1 and SPIKE 3
+
+Use **Import image**, **Choose table**, and **Play** as with SPIKE 2. The
+player detects SPIKE 1 `.iso`, `.img`, or `.raw` images and SPIKE 3 secure
+`.raw` images or Stern's original card `.zip`. The first play can take longer
+while the private WSL distro installs dependencies, builds the runtime, and
+prepares the image.
+
+- **SPIKE 1** uses the cabinet's Stern display for its DMD. Start with the
+  Ghostbusters LE table listed in **Supported Tables**. The runtime runs one
+  SPIKE 1 title at a time. VPX pause releases cabinet buttons while the
+  SPIKE 1 game keeps running.
+- **SPIKE 3** requires the matching OTP key file or `padkeys.json` the
+  first time the player prepares an encrypted card. Later imports and plays
+  can reuse that card's prepared files without the key file. Start with
+  The Walking Dead Remastered LE and the corresponding table in
+  **Supported Tables**.
+
+For a SPIKE 3 ZIP, keep the original download accessible to the player.
+Recognized Stern ZIPs can be added and paired with a table before the key file
+is supplied. The player asks for the key when it first needs to prepare the
+encrypted card for play. Preparation uses temporary compressed scratch space.
+The runtime retains the files it extracted for the game across plays.
+It never writes a full-size raw image. To use a ZIP instead of a previously
+imported raw, import the ZIP and choose the same prepared VPX table. If
+the old raw has moved, **Locate image** can relink the existing pairing.
 
 ## Supported VPX tables
 

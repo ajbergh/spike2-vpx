@@ -95,6 +95,8 @@ import padsw      # noqa: E402  offsets into padsw
 import bootprog   # noqa: E402  how far a Spike 2 boot is, off the run's own log (PAD-963)
 import padlaunch  # noqa: E402  starts a run for a table when none is up
 import padcabinet  # noqa: E402
+import padstern   # noqa: E402
+import s1bridge   # noqa: E402
 
 try:
     import pythoncom
@@ -472,7 +474,8 @@ class VpxMap:
         self.switch_rewrite = {}            # old table number -> Spike 2 id
         self.solenoids = {}                 # number -> (node, index)
         self.lamp_groups = {}               # number -> [(node, index), ...]
-        self.raw_lamp_rewrite = {}          # legacy number -> one LED read as its raw level
+        self.raw_lamp_rewrite = {}          # legacy number -> brightest mapped LED's raw level
+        self.led_lamps = True
         self.rgb_groups = set()             # numbers whose LEDs are an insert's R, G, B
         self.rgb_order = {}                 # number -> "BGR" etc. when not listed R, G, B (PAD-1097)
         self.fakes = {}                     # name -> dict (switch_fakes)
@@ -504,8 +507,10 @@ class VpxMap:
         m = json.load(open(path, encoding="utf-8"))
         game = m.get("game")
         self.game = game if isinstance(game, str) and game else self.title
-        if (m.get("platform") or "spike2").lower() != "spike2":
+        platform = padlaunch.map_platform(m)
+        if platform not in padlaunch.PLATFORMS:
             return
+        self.platform = platform
         g = m.get("game_on") or {}
         self.game_on = (int(g["number"]), [tuple(c) for c in g["coils"]]) if g else None
         self.cabinet = {k: int(v) for k, v in m.get("cabinet", {}).items()
@@ -514,16 +519,18 @@ class VpxMap:
             if k != "_":
                 self.switch_rewrite[int(k)] = int(v)
         self.sol_max = int(m.get("solenoid_max", 68))
+        self.led_lamps = bool(m.get("led_lamps", True))
         self.raw_lamp_rewrite = {}
         for k, v in m.get("raw_lamp_rewrite", {}).items():
             if k == "_":
                 continue
-            # a legacy number (below 1000: 1000+ is already every LED's own
-            # number) -> one [node, index]; anything else would be set twice
-            # a poll and report a change every frame
-            if not (0 < int(k) < 1000 and isinstance(v, list) and len(v) == 2):
-                raise ValueError("raw_lamp_rewrite %r: want a number 1-999 -> [node, index], got %r" % (k, v))
-            self.raw_lamp_rewrite[int(k)] = (int(v[0]), int(v[1]))
+            pairs = [v] if isinstance(v, list) and v and type(v[0]) is int else v
+            if not (0 < int(k) < 1000 and isinstance(pairs, list) and pairs and
+                    all(isinstance(pair, list) and len(pair) == 2 and
+                        all(type(value) is int for value in pair) and
+                        0 <= pair[0] < 16 and 0 <= pair[1] < 256 for pair in pairs)):
+                raise ValueError(f"raw_lamp_rewrite {k!r} needs one or more [node, index] pairs")
+            self.raw_lamp_rewrite[int(k)] = tuple(map(tuple, pairs))
         for k, v in m.get("solenoids", {}).items():
             if k != "_":
                 self.solenoids[int(k)] = tuple(v["coil"])
@@ -668,7 +675,8 @@ class Rig:
       3. padpath's default: the default distro's ~/spike2root.
     """
 
-    def __init__(self, title=None, record=None):
+    def __init__(self, title=None, record=None, *, emu="spike2"):
+        self.emu = emu
         self.distro = os.environ.get("PAD_WSL_DISTRO")
         self.root = os.environ.get("PAD_ROOT_WSL")        # posix
         self.slot = padpath.slot()
@@ -677,9 +685,9 @@ class Rig:
         self.label = ""
         rec = record
         if rec is None and not self.root:
-            rec = self.board_run(title)
+            rec = self.board_run(title) if emu == "spike2" else padstern.board_record(emu, title)
         if rec is None and self.root and self.slot:
-            candidate = self.board_slot(self.slot)
+            candidate = self.board_slot(self.slot) if emu == "spike2" else padstern.board_record(emu, title, self.slot)
             if candidate and candidate.get("root") == self.root and candidate.get("distro") == self.distro:
                 rec = candidate
         if rec:
@@ -689,7 +697,7 @@ class Rig:
             self.how = "rig board slot %s (%s)" % (self.slot, rec.get("game"))
             label = rec.get("label")
             if (title and rec.get("game") == title and self.root and self.distro
-                    and isinstance(label, str) and re.fullmatch(r"PAD-VPX-[0-9]+", label)):
+                    and isinstance(label, str) and re.fullmatch(r"PAD-VPX-[0-9]+(?:-[a-f0-9]{12})?", label)):
                 self.prepared_launch = True
                 self.label = label
         if self.root and self.distro:
@@ -839,8 +847,11 @@ class Rig:
     def tables_dir(self, title, runner=None):
         """dump/tables/<title> as Windows can read it: over the share, or a
         fresh copy fetched through WSL when the share cannot be opened."""
+        spike3 = getattr(self, "emu", "spike2") == "spike3"
+        source = self.root.rstrip("/") + "/tables" if spike3 else self.wsl_dump("tables")
         if self.share:
-            return os.path.join(self.dump, "tables", title or "")
+            root = os.path.dirname(self.dump) if spike3 else self.dump
+            return os.path.join(root, "tables", title or "")
         local = os.path.join(self.local_dir(), "tables")
         got = getattr(self, "_fetched", None)
         if got is None:
@@ -848,7 +859,7 @@ class Rig:
         now = time.monotonic()
         if title and now - got.get(title, -1e9) > self.FETCH_FRESH_S:
             got[title] = now
-            self.fetch(self.wsl_dump("tables"), [title], local, runner=runner)
+            self.fetch(source, [title], local, runner=runner)
         return os.path.join(local, title or "")
 
     def boot_log_dir(self, runner=None):
@@ -895,10 +906,11 @@ class Rig:
         """{(node, bit): id} from the title's switch_list.txt, the rig's own
         reading of the game's switch table (empty when the run has none)."""
         out = {}
-        if not self.share and title and self.root:
+        spike3 = getattr(self, "emu", "spike2") == "spike3"
+        if not spike3 and not self.share and title and self.root:
             self.seed_switch_list_wsl(title)
-        path = os.path.join(self.tables_dir(title), "switch_list.txt")
-        if self.share and title and not os.path.exists(path):
+        path = os.path.join(self.tables_dir("game" if spike3 else title), "switch_list.txt")
+        if not spike3 and self.share and title and not os.path.exists(path):
             self.seed_switch_list(title, path)
         try:
             for line in open(path, encoding="utf-8", errors="replace"):
@@ -2044,7 +2056,7 @@ class Bridge:
         # outlives the map: tables name their game in Table_Init, after the
         # stubs' top-level code has said its numbers
         self.map.solenoids.update(getattr(self, "own_sols", {}))
-        self.max_id = padsw.MAX_ID
+        self.max_id = s1bridge.N_SLOTS if self.spike1 else padsw.MAX_ID
         log("game %s: map %s (%s): switches=%d solenoids=%d lamp groups=%d"
             % (title, self.map.path or "NONE", self.map.platform, len(self.map.switch_rewrite),
                len(self.map.solenoids), len(self.map.lamp_groups)))
@@ -2052,6 +2064,28 @@ class Bridge:
     @property
     def native_title(self):
         return getattr(self.map, "game", None) or self.title
+
+    @property
+    def platform(self):
+        return getattr(self.map, "platform", "spike2")
+
+    @property
+    def spike1(self):
+        return self.platform == "spike1"
+
+    def _new_rig(self, record=None):
+        if self.spike1:
+            return s1bridge.Rig(self.native_title, record)
+        if self.platform == "spike3":
+            return Rig(self.native_title, record, emu="spike3")
+        return Rig(self.native_title, record=record) if record else Rig(self.native_title)
+
+    def _output(self):
+        if self.spike1:
+            return read_block(self.rig.led_path(), s1bridge.STATE_SIZE) if self.rig.record else None
+        if self.platform == "spike3" and self.rig.how == "padpath default":
+            return None
+        return read_block(self.rig.led_path(), READ_N) if SHARE_ON else None
 
     def own_solenoid(self, n, coil):
         """`Controller.PadSolenoid(n) = Array(node, index)` (PAD-1303): the
@@ -2074,10 +2108,12 @@ class Bridge:
         return True
 
     def _sol_number(self, node, idx):
-        return sol_number(node, idx)
+        return s1bridge.sol_number(node, idx) if self.spike1 else sol_number(node, idx)
 
     def _rig_up(self, data):
         """A fresh read of the run's output block says the game is up."""
+        if self.spike1:
+            return s1bridge.is_up(data)
         return bool(data) and coilmap.has_magic(data)
 
     def dof_init(self, rom, table_file, factory=None):
@@ -2201,7 +2237,7 @@ class Bridge:
         thread attaches when the game is up, and the table plays from then
         on - switches before that are kept and handed over at attach (the
         table's trough, set once at its Init), Visual Pinball never waits."""
-        self.rig = Rig(self.native_title)
+        self.rig = self._new_rig()
         self.external_start = self.rig.label if self.rig.prepared_launch else ""
         self.pipe = None
         self.launch = None
@@ -2221,7 +2257,7 @@ class Bridge:
         self.player_placed = False
         self._player_client = self._player_unfill = self._player_filled = None
         log("rig: %s -> %s" % (self.rig.how, self.rig.dump))
-        data = read_block(self.rig.led_path(), READ_N) if SHARE_ON else None
+        data = self._output()
         if self._rig_up(data):
             self._attach(data)
         elif self.external_start:
@@ -2235,11 +2271,11 @@ class Bridge:
                     "no %s run is up for %s and no card image to start one "
                     "(looked in %s). Start it with Play-Spike2Vpx.ps1 or record "
                     "its card: padvpx card %s <image>."
-                    % ("SPIKE 2",
+                    % (padlaunch.PLATFORMS.get(self.platform, self.platform),
                        self.title or "this title", padlaunch.card_places(self.title, self.map.platform),
                        self.title))
             self._carry_lcd_layout()
-            self.launch = padlaunch.Launch(self.title, card)
+            self.launch = padlaunch.launch_for(self.platform, self.title, card)
             self._loading_start()
             try:
                 slot = self.launch.start()
@@ -2263,6 +2299,8 @@ class Bridge:
         `pipe`: the link a run the share cannot reach came up on (PAD-1437)."""
         if pipe is not None:
             pass
+        elif self.spike1:
+            pipe = s1bridge.Pipe(self.rig)
         elif LINK_ON and sys.platform == "win32" and isinstance(self.rig, Rig):
             pipe = RigLink(self.rig)       # PAD-1306: pushed from WSL, not read over 9p
         else:
@@ -2328,6 +2366,14 @@ class Bridge:
         the playfield window read it); until then the loading window says
         which step the boot is on, and the run's windows are still handed
         back from (_starting). A rig that keeps no such log is ready now."""
+        if self.platform != "spike2":
+            if self.spike1 and self.launch is not None:
+                from vpx_lcd import fullscreen_target
+
+                self.launch.open_display(self.rig, fullscreen_target())
+            self.ready_t = time.monotonic()
+            self._loading_end("up")
+            return
         logdir = ""
         if self.rig is not None and getattr(self.rig, "slot", None):
             # a slot's logs are beside its root: padslots/<n>/root/dump
@@ -2450,7 +2496,7 @@ class Bridge:
         is up, so a run this bridge started may be read again) and the
         flipper buttons' coils for a run without the rule plane."""
         self.sw_ids = self.rig.switch_ids(self.native_title)
-        ver = struct.unpack_from("<I", data, 4)[0]
+        ver = 0 if self.spike1 else struct.unpack_from("<I", data, 4)[0]
         log("switch table: %d ids; padled version %d%s"
             % (len(self.sw_ids), ver, "" if ver >= 7 else
                " (no coil-rule plane: button coils assumed live)"))
@@ -2465,10 +2511,11 @@ class Bridge:
             sid = cab.get(key, 0) - 1000
             if coil and sid in by_id:
                 self._button_coils[coil] = by_id[sid][1]
-        try:
-            self._read_cabinet()
-        except Exception as exc:                        # noqa: BLE001
-            log("cabinet lights not read: %s" % exc)
+        if not self.spike1:
+            try:
+                self._read_cabinet()
+            except Exception as exc:                        # noqa: BLE001
+                log("cabinet lights not read: %s" % exc)
 
     def _read_cabinet(self, tables_dir=None, kit=None):
         """The cabinet's lights on this title's boards and the kit's cabinet
@@ -2532,7 +2579,8 @@ class Bridge:
 
     def _can_go_unshared(self):
         return (LINK_ON and sys.platform == "win32"
-                and isinstance(self.rig, Rig) and bool(self.rig.root) and bool(self.rig.distro))
+                and isinstance(self.rig, Rig) and bool(self.rig.root) and bool(self.rig.distro)
+                and (self.platform == "spike2" or self.rig.how.startswith("rig board")))
 
     def _stop_stuck(self, why="the game is up, Windows cannot read it"):
         log("WSL's link to Windows is stuck: %s; stopping the run (Restart WSL clears it)" % why)
@@ -2621,12 +2669,12 @@ class Bridge:
         if self.launch is None and not self.external_start:
             return
         if self.rig is None and self.launch is not None:
-            rec = Rig.board_slot(self.launch.slot)
+            rec = Rig.board_slot(self.launch.slot) if self.platform == "spike2" else self.launch.record()
             if rec:
-                self.rig = Rig(self.native_title, record=rec)
+                self.rig = self._new_rig(record=rec)
                 log("rig: %s -> %s" % (self.rig.how, self.rig.dump))
         if self.rig is not None:
-            data = read_block(self.rig.led_path(), READ_N) if SHARE_ON else None
+            data = self._output()
             if self._rig_up(data):
                 self._attach(data)
                 return
@@ -2644,7 +2692,7 @@ class Bridge:
                 self._block_said = True
                 # PAD-1247: and as WSL itself reads it, which tells a stuck
                 # WSL-to-Windows link from a game that never opened its block
-                seen = block_in_wsl(self.rig)
+                seen = None if self.spike1 else block_in_wsl(self.rig)
                 log("the game's output block (%s) is not up %d s after its board record "
                     "came (%s; inside WSL %s)%s"
                     % (self.rig.led_path(), self.BLOCK_LATE_S, block_state(data),
@@ -2680,7 +2728,7 @@ class Bridge:
                 self.front_done, self.front_tries = False, {}
                 self.lcd_placed = False
                 self.lcd_tries = self.lcd_stable = 0
-                retry = padlaunch.Launch(self.title, failed.card)
+                retry = padlaunch.launch_for(self.platform, self.title, failed.card)
                 self.launch = retry
                 try:
                     slot = retry.start()
@@ -2701,7 +2749,7 @@ class Bridge:
                 % (self.title, logfile, run_log_said(logfile)))
             self._loading_end("failed The emulator stopped before the game came up. Its log: %s"
                               % logfile)
-        elif time.monotonic() - self.start_t > self.START_TIMEOUT_S:
+        elif time.monotonic() - self.start_t > max(self.START_TIMEOUT_S, getattr(self.launch, "first_boot_timeout", 0)):
             log("the run started for %s is not up after %d s; giving up on it"
                 % (self.title, self.START_TIMEOUT_S))
             self._loading_end("failed The game was not up after %d s. Its log: %s"
@@ -2752,6 +2800,9 @@ class Bridge:
             return
         if want:
             self._release_buttons()
+        if self.spike1:
+            self.pipe.pause()
+            return
         if want and kit_window_in_front():
             # the player clicked the game's own LCD or playfield window (to
             # move it, to look at it): Visual Pinball pauses, the GAME does
@@ -3305,6 +3356,9 @@ class Bridge:
             self.front_done = True       # after the start, a click on the LCD window is the user's own
 
     def _poll_once(self):
+        if self.spike1:
+            self._poll_spike1()
+            return
         link = self.pipe if hasattr(self.pipe, "blocks") else None
         pushed = None
         if (link is not None and not getattr(self.rig, "share", True)
@@ -3370,20 +3424,63 @@ class Bridge:
             return data[coilmap.HI_OFF + node * coilmap.HI_IDX + idx - 96]
         return 0
 
-    def _poll_lamps(self, data):
+    def _poll_spike1(self):
+        state = s1bridge.unpack(self._output())
+        if not state:
+            self.poll_fail += 1
+            return
+        switches, lamps, coils, _ = state
+        self.polls += 1
+        if len(self.sw_ids) <= len(s1bridge.CPU_SERVICE) and self.polls % 250 == 0:
+            self._read_tables(self._output())
+
+        def level(node, index):
+            return s1bridge.lamp_level(lamps, node, index)
+
+        with self.lock:
+            self.mrg = switches
+            self._poll_mapped_lamps(level)
+            rule_coils = {}
+            for node in range(s1bridge.MAX_NODES):
+                for index in range(s1bridge.MAX_INDEX):
+                    lamp = lamp_number(node, index)
+                    if self.map.led_lamps and lamp not in self.map.lamp_groups:
+                        self._lamp_set(lamp, int(level(node, index) >= LAMP_ON))
+                    key = (node, index)
+                    switch = self.sw_ids.get((node, self._button_coils.get(key)))
+                    held = self.pipe.held.get(switch, 0) if self.pipe else 0
+                    if switch:
+                        rule_coils.setdefault(switch, []).append((key, False))
+                    self._coil_set(key, int(bool(coils[s1bridge.slot(*key)] or held)))
+            self._rule_coils = rule_coils
+            if self.map.game_on:
+                self._sol_set(self.map.game_on[0], 1)
+            self._fakes_tick(time.monotonic())
+            if self.dof and self.dof.up:
+                for number, key in self.map.dof_sols.items():
+                    self._dof_set("S", number, int(bool(self.sol_state.get(self._sol_number(*key)))))
+                for number, leds in self.map.dof_lamps.items():
+                    self._dof_set("L", number, int(max(level(*led) for led in leds) >= LAMP_ON))
+                for number, leds in self.map.dof_flashers.items():
+                    brightness = max(level(*led) for led in leds)
+                    self._dof_set("S", number, brightness if brightness >= LAMP_ON else 0)
+
+    def _poll_mapped_lamps(self, level):
         # raw channels (a mechanism's position, a mono level), then the
         # mapped groups, then every LED any table might name directly
-        for n, (node, idx) in self.map.raw_lamp_rewrite.items():
-            self._lamp_set(n, self._led_level(data, node, idx))
+        for n, leds in self.map.raw_lamp_rewrite.items():
+            self._lamp_set(n, max(level(node, idx) for node, idx in leds))
         for n, leds in self.map.lamp_groups.items():
-            levels = [self._led_level(data, nd, ix) for nd, ix in leds]
+            levels = [level(nd, ix) for nd, ix in leds]
             if max(levels) < LAMP_ON:
                 self._lamp_set(n, 0)
             elif n in self.map.rgb_groups:
                 self._lamp_set(n, rgb_value(*rgb_levels(levels, getattr(self.map, "rgb_order", {}).get(n))))
             else:
                 self._lamp_set(n, 1)
-        for node in range(16):
+    def _poll_lamps(self, data):
+        self._poll_mapped_lamps(lambda node, index: self._led_level(data, node, index))
+        for node in range(16 if getattr(self.map, "led_lamps", True) else 0):
             base = 20 + node * 96
             for idx in range(96):
                 n = lamp_number(node, idx)

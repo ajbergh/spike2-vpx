@@ -26,6 +26,13 @@ Source: "{#ProjectDir}\spike2_vpx\*.py"; DestDir: "{app}\spike2_vpx"; Flags: ign
 Source: "{#ProjectDir}\assets\spike2_vpx.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "{#ProjectDir}\assets\backglasses\*.png"; DestDir: "{app}\assets\backglasses"; Flags: ignoreversion
 Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc,games\*,shots\*,*.log,*.raw"
+Source: "{#ProjectDir}\tools\spike1_emu\*"; DestDir: "{app}\tools\spike1_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
+Source: "{#ProjectDir}\tools\spike3_emu\*"; DestDir: "{app}\tools\spike3_emu"; Flags: recursesubdirs ignoreversion; Excludes: "__pycache__,*.pyc"
+Source: "{#ProjectDir}\tools\rigboard.sh"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#ProjectDir}\tools\vpx_stern_session.sh"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#ProjectDir}\pinball_decryptor\core\longpath.py"; DestDir: "{app}\pinball_decryptor\core"; Flags: ignoreversion
+Source: "{#ProjectDir}\pinball_decryptor\plugins\stern\*.py"; DestDir: "{app}\pinball_decryptor\plugins\stern"; Flags: ignoreversion
+Source: "{#ProjectDir}\stern-spike-3\tools\luks_otp.py"; DestDir: "{app}\stern-spike-3\tools"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\spike2_vpx.ico"

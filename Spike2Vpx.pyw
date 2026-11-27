@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
 from spike2_vpx.player import STERN_IMAGES, Player, artwork_paths, folder_images, image_version, supported_tables
+from spike3_image import KeyRequired
 from spike2_vpx_setup import ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
 from spike2_vpx import backglass, cabinet, lighting, sessions, support
 import padisplay
@@ -263,7 +264,7 @@ class PlayerWindow:
 
     def build_supported_tables(self):
         page = self.tables_page
-        ttk.Label(page, text="Supported SPIKE 2 games", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(page, text="Supported Stern games", style="Section.TLabel").pack(anchor="w")
         ttk.Label(page, text="Choose the VPX table and version listed for your game. "
                              "You supply the SD-card image and table.", wraplength=700).pack(
             anchor="w", pady=(4, 10))
@@ -276,7 +277,7 @@ class PlayerWindow:
         results = ttk.Frame(page)
         results.pack(fill="both", expand=True)
         self.catalog = ttk.Treeview(results, columns=("game", "table"), show="headings", selectmode="browse")
-        self.catalog.heading("game", text="SPIKE 2 game")
+        self.catalog.heading("game", text="Stern game")
         self.catalog.heading("table", text="Compatible VPX table")
         self.catalog.column("game", width=200, minwidth=140, stretch=False)
         self.catalog.column("table", width=550, minwidth=280)
@@ -1155,8 +1156,8 @@ class PlayerWindow:
         self.start(work, self.show_checks, "Checking the selected VPX installation…")
 
     def choose_image(self, expected=None):
-        path = filedialog.askopenfilename(parent=self.root, title="Choose a SPIKE 2 image",
-                                          filetypes=[("SD-card images and ZIP archives", "*.raw *.zip"),
+        path = filedialog.askopenfilename(parent=self.root, title="Choose a Stern image",
+                                          filetypes=[("SD-card images and ZIP archives", "*.raw *.iso *.img *.zip"),
                                                      ("All files", "*.*")])
         if path:
             self.load_image(path, expected)
@@ -1174,14 +1175,14 @@ class PlayerWindow:
             messagebox.showerror("Choose folder", str(exc), parent=self.root)
             return
         if not candidates:
-            messagebox.showinfo("Choose folder", "This folder contains no .raw images.", parent=self.root)
+            messagebox.showinfo("Choose folder", "This folder contains no Stern card images.", parent=self.root)
             return
         if len(candidates) == 1:
             self.load_image(candidates[0])
             return
         if self.game:
             try:
-                match = play_spike2.card_in_folder(Path(folder), self.game.title)
+                match = play_spike2.card_in_folder(Path(folder), self.game.title, self.game.platform)
             except ValueError:
                 pass
             else:
@@ -1196,7 +1197,7 @@ class PlayerWindow:
         dialog.transient(self.root)
         pane = ttk.Frame(dialog, padding=12)
         pane.pack(fill="both", expand=True)
-        ttk.Label(pane, text="This folder has several .raw images. Choose one to inspect.").pack(anchor="w")
+        ttk.Label(pane, text="This folder has several card images. Choose one to inspect.").pack(anchor="w")
         choices = tk.Listbox(pane, exportselection=False)
         choices.pack(fill="both", expand=True, pady=8)
         for path in candidates:
@@ -1217,9 +1218,14 @@ class PlayerWindow:
         choices.focus_set()
         dialog.grab_set()
 
-    def load_image(self, path, expected=None):
+    def choose_spike3_key(self, error):
+        self.summary.configure(text=str(error))
+        return filedialog.askopenfilename(parent=self.root, title="Choose your SPIKE 3 OTP key file",
+                                          filetypes=[("Key files", "*.bin *.key *.json"), ("All files", "*.*")])
+
+    def load_image(self, path, expected=None, *, keyfile=None, on_done=None):
         def work():
-            image, note = self.player.prepare_image(path, expected)
+            image, note = self.player.prepare_image(path, expected, keyfile=keyfile)
             if expected and expected in self.saved:
                 image = self.player.relink_image(expected, image)
             elif not any(game.title == image.title and game.image == image.image for game in self.saved):
@@ -1231,11 +1237,24 @@ class PlayerWindow:
             saved = next((row for row in self.player.library() if row.title == image.title and
                           Path(row.image) == Path(image.image)), None)
             self.reload_library(saved or image)
-            self.summary.configure(text=f"{image.name} · image verified.")
+            status = "ZIP added." if image.archive_id and keyfile is None else "Image verified."
+            self.summary.configure(text=f"{image.name} · {status}")
+            if on_done:
+                on_done()
 
-        message = "Extracting and inspecting the SD-card image…" if Path(path).suffix.casefold() == ".zip" else (
+        message = "Inspecting the card archive…" if Path(path).suffix.casefold() == ".zip" else (
             "Inspecting the SD-card image…")
-        self.start(work, done, message)
+
+        def failed(error):
+            if isinstance(error, KeyRequired):
+                selected = self.choose_spike3_key(error)
+                if selected:
+                    self.load_image(path, expected, keyfile=selected, on_done=on_done)
+            else:
+                self.summary.configure(text=str(error))
+                messagebox.showerror("SPIKE 2 VPX", str(error), parent=self.root)
+
+        self.start(work, done, message, failed)
 
     def choose_table(self):
         game = self.game
@@ -1288,6 +1307,12 @@ class PlayerWindow:
 
         def failed(error):
             text = str(error)
+            if isinstance(error, KeyRequired):
+                selected = self.choose_spike3_key(error)
+                self.launch_text.set("")
+                if selected:
+                    self.load_image(game.image, game, keyfile=selected, on_done=self.play)
+                return
             if isinstance(error, sessions.StaleSession):
                 self.recover_game = game
             else:

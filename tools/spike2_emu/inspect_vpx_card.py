@@ -1,9 +1,10 @@
-"""Identify the primary title that the VPX launcher can boot from a raw card."""
+"""Identify the primary Stern title that the VPX launcher can boot."""
 
 import json
 import os
 import re
 import sys
+from pathlib import Path
 
 import parts
 
@@ -30,9 +31,42 @@ def inspect(path):
     return title.lower()
 
 
+def spike1_title(path):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spike1_emu"))
+    from build_rootfs import _lookup, _open_partitions, early_spike1_game_dir, find_rootfs_and_game
+
+    stream, partitions = _open_partitions(path)
+    with stream:
+        root, game, title = find_rootfs_and_game(stream, partitions)
+        if root is not None and _lookup(root, "/etc/version") is not None:
+            if game is None:
+                title = early_spike1_game_dir(root)
+            elif title and _lookup(game, "/" + title + "/game") is None:
+                title = None
+            if title and re.fullmatch(r"[a-zA-Z0-9_-]+", title):
+                return title.lower()
+    raise ValueError("Could not verify a SPIKE 1 system and game on this image.")
+
+
+def inspect_stern(path):
+    if not os.path.isfile(path):
+        raise ValueError("The runtime cannot read this image. Choose a file on a Windows drive.")
+    if parts.spike3(path)[0]:
+        return {"platform": "spike3"}
+    if Path(path).suffix.lower() != ".iso":
+        try:
+            return {"title": inspect(path), "platform": "spike2"}
+        except ValueError as exc:
+            try:
+                return {"title": spike1_title(path), "platform": "spike1"}
+            except ValueError:
+                raise exc from None
+    return {"title": spike1_title(path), "platform": "spike1"}
+
+
 if __name__ == "__main__":
     try:
-        print(json.dumps({"title": inspect(sys.argv[1])}))
-    except (OSError, ValueError) as exc:
+        print(json.dumps(inspect_stern(sys.argv[1])))
+    except (OSError, ValueError, SystemExit) as exc:
         print(json.dumps({"error": str(exc)}))
         sys.exit(1)

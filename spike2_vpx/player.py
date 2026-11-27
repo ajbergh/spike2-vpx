@@ -21,9 +21,11 @@ from spike2_vpx_setup import APP, DISTRO, RIG
 import padisplay
 import padlaunch
 import padlighting
+import padstern
 import padvpx
 import play_spike2
 from spike2_vpx import cabinet, runtime, sessions, support
+from tools.spike3_emu import s3zip
 
 STERN_IMAGES = "https://www.sternpinball.com/support/sd-cards/"
 BACKGLASS_ART = APP / "assets" / "backglasses"
@@ -39,6 +41,8 @@ class Game:
     artwork: str = ""
     favorite: bool = False
     last_played: str = ""
+    platform: str = "spike2"
+    archive_id: str = ""
 
     @property
     def name(self):
@@ -68,13 +72,28 @@ def image_version(name):
     return ".".join(match.groups()) if match else ""
 
 
+def spike3_archive_title(member, archive):
+    """Match a stock image name to a native title with a SPIKE 3 table map."""
+    titles = {mapping["game"] for mapping in padvpx.maps().values() if mapping["platform"] == "spike3"}
+    for name in (member, archive):
+        normalized = re.sub(r"[^a-z0-9]+", "_", Path(name).name.casefold()).removeprefix("the_")
+        matches = [title for title in titles if normalized.startswith(title.casefold() + "_")]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
 def game_from_row(row):
     if not isinstance(row, dict) or not all(isinstance(row.get(k), str) and row[k]
                                             for k in ("title", "image")):
         return None
-    optional = {k: row[k] for k in ("table", "image_version", "table_release", "artwork", "last_played")
+    optional = {k: row[k] for k in ("table", "image_version", "table_release", "artwork", "last_played", "archive_id")
                 if isinstance(row.get(k), str)}
-    return Game(row["title"], row["image"], **optional, favorite=row.get("favorite") is True)
+    platform = row.get("platform", "spike2")
+    if not isinstance(platform, str) or platform not in padlaunch.PLATFORMS:
+        return None
+    return Game(row["title"], row["image"], **optional, favorite=row.get("favorite") is True,
+                platform=platform)
 
 
 def supported_tables():
@@ -100,8 +119,15 @@ def file_of_type(path, suffix):
 
 
 def folder_images(folder):
-    return sorted((p for p in Path(folder).iterdir() if p.suffix.casefold() == ".raw"
+    return sorted((p for p in Path(folder).iterdir() if p.suffix.casefold() in padlaunch.IMAGE_SUFFIXES | {".zip"}
                    and p.is_file()), key=lambda p: p.name.casefold())
+
+
+def image_file(path):
+    file = Path(path).resolve()
+    if not file.is_file() or file.suffix.casefold() not in padlaunch.IMAGE_SUFFIXES | {".zip"}:
+        raise ValueError("Choose an existing .raw, .iso, .img, or SPIKE 3 .zip card image.")
+    return file
 
 
 class Player:
@@ -156,17 +182,30 @@ class Player:
         self.setup.save()
 
     def relink_image(self, previous, image):
-        if image.title != previous.title:
+        if (image.title, image.platform) != (previous.title, previous.platform):
             raise ValueError(f"Choose an SD-card image for {previous.name}.")
-        game = replace(previous, image=image.image, image_version=image.image_version)
+        game = replace(previous, image=image.image, image_version=image.image_version, archive_id=image.archive_id)
         games = [row for row in self.library() if row != previous and
                  (row.title, Path(row.image)) != (game.title, Path(game.image))]
         self.setup.settings["games"] = [asdict(game), *(asdict(row) for row in games)]
         self.setup.save()
         return game
 
-    def inspect_image(self, path):
-        image = file_of_type(path, ".raw")
+    def key_for_game(self, game):
+        keys = self.setup.settings.get("spike3_keys")
+        return keys.get(game.title) if isinstance(keys, dict) and game.platform == "spike3" else None
+
+    def inspect_image(self, path, *, keyfile=None):
+        image = image_file(path)
+        if image.suffix.casefold() == ".zip":
+            try:
+                with ZipFile(image) as archive:
+                    member = s3zip.member_for(archive)
+                    if s3zip.is_spike3(archive, member):
+                        return self.inspect_spike3_archive(image, archive, member, keyfile)
+            except (BadZipFile, NotImplementedError, RuntimeError) as exc:
+                raise ValueError(f"Unable to read the card ZIP. {exc}") from exc
+            raise ValueError("Import this ZIP through Games to prepare its card image.")
         paths = padlaunch.padpath.to_wsl_many([str(RIG), str(image)], DISTRO)
         script = paths[0] + "/inspect_vpx_card.py"
         out = self.setup.wsl("python3", "-B", script, paths[1], timeout=150)
@@ -176,44 +215,84 @@ class Player:
             except (ValueError, TypeError, KeyError):
                 error = runtime._why(out)
             raise ValueError(error)
-        return Game(json.loads(out.stdout)["title"], str(image), image_version=image_version(image.name))
+        result = json.loads(out.stdout)
+        platform = result.get("platform", "spike2")
+        if platform == "spike3":
+            import spike3_image
 
-    def import_archive(self, path, expected=None):
+            title = padstern.prepared_spike3_title(image, DISTRO)
+            if not title:
+                title = spike3_image.title_for(image, spike3_image.keyfile(image, keyfile))
+        else:
+            title = result["title"]
+        return Game(title, str(image), image_version=image_version(image.name), platform=platform)
+
+    def inspect_spike3_archive(self, image, archive, member, keyfile, *, allow_filename=False):
+        import spike3_image
+
+        title = padstern.prepared_spike3_title(image, DISTRO)
+        if not title and allow_filename and keyfile is None:
+            title = spike3_archive_title(member.filename, image.name)
+        if not title:
+            key = spike3_image.keyfile(image, keyfile)
+            if key is None:
+                raise spike3_image.KeyRequired("Choose your SPIKE 3 OTP key file to verify this image.")
+            spike3_image.read_key(key)
+            with s3zip.open_image(archive, member) as stream:
+                title = spike3_image.title_from_stream(stream, key)
+        return Game(title, str(image), platform="spike3", archive_id=s3zip.identity(archive, member),
+                    image_version=image_version(Path(member.filename).name) or image_version(image.name))
+
+    def import_archive(self, path, expected=None, *, keyfile=None):
         source = file_of_type(path, ".zip")
         directory = self.setup.data / "images"
-        directory.mkdir(parents=True, exist_ok=True)
         try:
             with ZipFile(source) as archive:
-                images = [member for member in archive.infolist()
-                          if not member.is_dir() and Path(member.filename).suffix.casefold() == ".raw"
-                          and not member.filename.startswith("__MACOSX/")]
-                if len(images) != 1 or images[0].file_size == 0:
-                    raise ValueError("Import a ZIP containing one non-empty .raw image, or extract the image yourself.")
-                member = images[0]
+                member = s3zip.member_for(archive)
+                if s3zip.is_spike3(archive, member):
+                    game = self.inspect_spike3_archive(source, archive, member, keyfile, allow_filename=True)
+                    if expected and (game.title, game.platform) != (expected.title, expected.platform):
+                        raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
+                    return game
+                if (expected and expected.platform == "spike3") or member.filename.lower().endswith(".sdcard-secure.raw"):
+                    raise ValueError("Could not recognize the SPIKE 3 card inside this ZIP.")
+                directory.mkdir(parents=True, exist_ok=True)
+                suffix = Path(member.filename).suffix.casefold()
                 if member.file_size > shutil.disk_usage(directory).free:
                     raise ValueError(f"Free up space on {directory.anchor} to extract this image "
                                      f"({member.file_size / 1024**3:.1f} GiB required).")
                 # Use app-owned names. An archive entry cannot choose where we write.
                 with TemporaryDirectory(dir=directory) as stage:
-                    extracted = Path(stage) / "card.raw"
+                    extracted = Path(stage) / ("card" + suffix)
                     with archive.open(member) as data, extracted.open("wb") as out:
                         shutil.copyfileobj(data, out, length=1024 * 1024)
-                    game = self.inspect_image(extracted)
-                    if expected and game.title != expected.title:
+                    game = self.inspect_image(extracted, keyfile=keyfile) if keyfile else self.inspect_image(extracted)
+                    if expected and (game.title, game.platform) != (expected.title, expected.platform):
                         raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
-                    destination = directory / (uuid4().hex + ".raw")
+                    destination = directory / (uuid4().hex + suffix)
                     extracted.replace(destination)
         except (BadZipFile, RuntimeError, NotImplementedError) as exc:
-            raise ValueError(f"Unable to extract this ZIP. Download it again or extract the .raw manually. {exc}") from exc
+            raise ValueError(f"Unable to extract this ZIP. Download it again or extract the image manually. {exc}") from exc
         return replace(game, image=str(destination), image_version=image_version(Path(member.filename).name)
                        or image_version(source.name))
 
-    def prepare_image(self, path, expected=None):
+    def prepare_image(self, path, expected=None, *, keyfile=None):
         imported = Path(path).suffix.casefold() == ".zip"
-        game = self.import_archive(path, expected) if imported else self.inspect_image(path)
-        if expected and game.title != expected.title:
+        key = keyfile or (self.key_for_game(expected) if expected else None)
+        if imported:
+            game = self.import_archive(path, expected, keyfile=keyfile)
+        else:
+            game = self.inspect_image(path, keyfile=key) if key else self.inspect_image(path)
+        if expected and (game.title, game.platform) != (expected.title, expected.platform):
             raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
-        if not padlaunch.cache_on():
+        if game.platform == "spike3" and keyfile:
+            keys = self.setup.settings.get("spike3_keys")
+            self.setup.settings["spike3_keys"] = {**(keys if isinstance(keys, dict) else {}),
+                                                  game.title: str(Path(keyfile).resolve())}
+            self.setup.save()
+        if game.archive_id:
+            return game, "Using the original SPIKE 3 ZIP. The first play prepares the game files."
+        if game.platform != "spike2" or not padlaunch.cache_on():
             note = "Extracted and verified the ZIP image." if imported else "Read directly from the source image."
             return game, note
         try:
@@ -269,9 +348,8 @@ class Player:
     def export(self, game, path):
         warnings = self.preflight(game)
         table = file_of_type(game.table, ".vpx")
-        image = file_of_type(game.image, ".raw")
-        if self.inspect_image(image).title != game.title:
-            raise ValueError("The image now contains a different title. Select the image again.")
+        image = image_file(game.image)
+        self.verify_pairing(game)
         self.compatible(game, table, play_spike2.embedded_script(table))
         target = Path(path)
         if target.suffix.casefold() not in (".cmd", ".bat"):
@@ -310,11 +388,25 @@ class Player:
     def compatible(self, game, table, script):
         title = play_spike2.read_title(table, script)
         mapping = padlaunch.table_map(title)
-        if not mapping or padlaunch.game_for(title).casefold() != game.title:
+        if (not mapping or padlaunch.map_platform(mapping) != game.platform
+                or padlaunch.game_for(title).casefold() != game.title):
             raise ValueError(f"This table is prepared for {title}. Choose a table for {game.name}.")
         if ("padspike2.vbs" in script.casefold()
                 and not (table.parent / "PADSPIKE2.vbs").is_file()):
             raise ValueError("PADSPIKE2.vbs is missing beside this table. Choose the original VPX file to prepare a new copy.")
+
+    def verify_pairing(self, game):
+        if game.platform == "spike3" and game.archive_id and Path(game.image).suffix.lower() == ".zip":
+            try:
+                if s3zip.archive_id(game.image) == game.archive_id:
+                    return
+            except BadZipFile as exc:
+                raise ValueError("The SPIKE 3 card ZIP could not be read. Select it again.") from exc
+            raise ValueError("The SPIKE 3 ZIP changed since import. Select it again to verify the new card.")
+        key = self.key_for_game(game)
+        inspected = self.inspect_image(game.image, keyfile=key) if key else self.inspect_image(game.image)
+        if (inspected.title, inspected.platform) != (game.title, game.platform):
+            raise ValueError("The image now contains a different title. Select the image again.")
 
     def prepare_table(self, game, path, progress):
         table = file_of_type(path, ".vpx")
@@ -324,7 +416,7 @@ class Player:
             pairing = replace(game, table=str(table), table_release="")
             return replace(pairing, table_release=self.table_release(pairing))
         matches = [(title, info) for title, info in padvpx.fitting(str(table), script)
-                   if info["game"].casefold() == game.title]
+                   if info["game"].casefold() == game.title and info["platform"] == game.platform]
         if not matches:
             raise ValueError(f"No patch map matches this table and {game.name}. Choose a compatible VPX file.")
         title, info = padvpx.choose(matches, title=game.title)
@@ -406,8 +498,7 @@ class Player:
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
         progress("Checking files", False)
         overlap = play_spike2.check_controller()
-        if self.inspect_image(game.image).title != game.title:
-            raise ValueError("The image now contains a different title. Select the image again.")
+        self.verify_pairing(game)
         table = file_of_type(game.table, ".vpx")
         script = play_spike2.embedded_script(table)
         self.compatible(game, table, script)
@@ -423,8 +514,9 @@ class Player:
         else:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
-        launch = padlaunch.Launch(title, game.image, dist=DISTRO, minutes=0, prepared=True,
-                                  audio_control=str(self.audio_path), cache_update=cache_update)
+        options = {"keyfile": self.key_for_game(game)} if game.platform == "spike3" else {}
+        launch = padlaunch.launch_for(game.platform, title, game.image, dist=DISTRO, minutes=0, prepared=True,
+                                     audio_control=str(self.audio_path), cache_update=cache_update, **options)
         started = False
         lighting_record = self.lighting_record(game)
 

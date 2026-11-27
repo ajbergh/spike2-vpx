@@ -45,7 +45,7 @@ def maps():
     for f in sorted(os.listdir(HERE)):
         if f.endswith(".shadow.json") or f.endswith(".vpxmap.json"):
             m = json.load(open(os.path.join(HERE, f), encoding="utf-8"))
-            if (m.get("platform") or "spike2").lower() != "spike2":
+            if padlaunch.map_platform(m) not in padlaunch.PLATFORMS:
                 continue
             title = m.get("title") or f.split(".")[0]
             game = m.get("game")            # same rule as padlaunch.game_for
@@ -61,7 +61,7 @@ def maps():
                           # one patcher, several maps (TMNT's LE and Pro)
                           "patcher_takes_map": bool(m.get("patcher_takes_map")),
                           # PAD-943: which rig the title runs on (spike2 unless said)
-                          "platform": (m.get("platform") or "spike2").lower(),
+                          "platform": padlaunch.map_platform(m),
                           # PAD-848: off the tab's Tables list (TMNT's LE: its card
                           # starts no game in the emulator, PAD-829; the Pro plays)
                           "listed": m.get("listed", True) is not False}
@@ -289,7 +289,7 @@ def vpx_ini_set(keys, section="Player", path=None):
 
 def platform_of(title):
     """What a title's map says it runs on: "spike2" unless it says (PAD-943)."""
-    return (maps().get(title) or {}).get("platform") or "spike2"
+    return padlaunch.map_platform(padlaunch.table_map(title))
 
 
 def run(title, hidden=False, mute=False):
@@ -298,6 +298,12 @@ def run(title, hidden=False, mute=False):
     if not card:
         print("no card for %s (looked in %s)" % (title, padlaunch.card_places(title, platform)))
         return 2
+    if platform != "spike2":
+        launch = padlaunch.launch_for(platform, title, card, minutes=0)
+        launch.hidden, launch.mute = hidden, mute
+        slot = launch.start()
+        print("started %s on rig slot %d from %s (log %s)" % (title, slot, card, launch.logfile))
+        return 0
     launch = padlaunch.Launch(title, card)
     slot = launch.take_slot()
     env = launch.env()
@@ -316,7 +322,16 @@ def run(title, hidden=False, mute=False):
 
 def stop(title):
     from padcontroller import Rig
+    import padstern
+
+    platform = platform_of(title)
     title = padlaunch.game_for(title)
+    if platform != "spike2":
+        rec = padstern.board_record(platform, title)
+        if not rec:
+            print("no run of %s on the board" % title)
+            return 1
+        return padstern.stop_record(rec).returncode
     rec = Rig.board_run(title)
     if not rec:
         print("no run of %s on the board" % title)

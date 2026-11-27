@@ -62,7 +62,7 @@ def read_backup(path):
     for row in games:
         if not re.fullmatch(r"[a-z0-9_-]+", row["title"]):
             raise ValueError("The backup contains an invalid game title.")
-        for key, suffixes in (("image", {".raw"}), ("table", {".vpx"}), ("artwork", {".png", ".gif"})):
+        for key, suffixes in (("image", {".raw", ".iso", ".img", ".zip"}), ("table", {".vpx"}), ("artwork", {".png", ".gif"})):
             path = row.get(key, "")
             if not isinstance(path, str) or (path and (not Path(path).is_absolute()
                     or Path(path).suffix.casefold() not in suffixes or any(c in path for c in "\x00\r\n"))):
