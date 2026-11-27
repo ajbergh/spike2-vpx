@@ -219,7 +219,10 @@ def test_zip_import_extracts_one_verified_card_without_using_archive_paths(playe
     assert source.read_bytes() == original
 
 
-def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(player, tmp_path):
+def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
     source = tmp_path / "Stern image.zip"
     with ZipFile(source, "w") as archive:
         archive.writestr("card1.raw", b"card")
@@ -232,6 +235,30 @@ def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(play
     with pytest.raises(ValueError, match="Not a SPIKE 2 image"):
         player.import_archive(source)
     assert not list((tmp_path / "images").iterdir())
+
+
+def test_zip_import_passes_only_the_member_to_the_local_runtime(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    source = tmp_path / "share" / "Stern image.zip"
+    source.parent.mkdir()
+    with ZipFile(source, "w") as archive:
+        archive.writestr("folder/godzilla_1_12_0.RAW", b"card")
+    local = Game("godzilla_le", r"\\wsl.localhost\SPIKE2-VPX\home\pad\card.raw")
+    expected = Game("godzilla_le", "old.raw")
+
+    def import_local(data, size, selected):
+        assert data.read() == b"card"
+        assert size == 4
+        assert selected == expected
+        return local
+
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: True)
+    monkeypatch.setattr(player, "import_local_card", import_local)
+    game, _ = player.prepare_image(source, expected)
+    assert game.image == local.image
+    assert game.image_version == "1.12.0"
+    assert not (tmp_path / "images").exists()
 
 
 def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path, monkeypatch):

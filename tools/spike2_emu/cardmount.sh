@@ -563,10 +563,12 @@ cache_check() {   # <img>
     DRY_GONE=""; ROOM_WHY=""; ROOM_EVICT_N=0; ROOM_EVICT_KB=0; ROOM_FREE_KB=""
     if [ "${PAD_CARD_CACHE:-1}" = 0 ]; then
         state=off
+    elif on_cache_disk "$img"; then
+        state=cached; need=0           # boot the local image in place
     elif ! cache_folder_ready; then
         state=unavailable; need=0
-    elif on_cache_disk "$img" || library_copy "$img" >/dev/null; then
-        state=cached; need=0           # PAD-966: booted where it lies, or from its library copy - nothing to copy
+    elif library_copy "$img" >/dev/null; then
+        state=cached; need=0           # PAD-966: boot from the library copy
     elif cache_valid "$img" "$copy" "$stamp"; then
         state=cached
     elif copier_alive "$CACHE/$label.pid" "$copy"; then
@@ -604,7 +606,11 @@ cache_kind() {
 # still be rewriting it.
 on_cache_disk() {   # <img>
     local r c
-    r=$(readlink -f "$1" 2>/dev/null) && c=$(readlink -f "$CACHE" 2>/dev/null) && [ -n "$r" ] || return 1
+    r=$(readlink -f "$1" 2>/dev/null) && [ -n "$r" ] || return 1
+    # ZIP imports are already sparse and local. They are library sources and
+    # live outside the evictable cache, including with a custom Windows cache.
+    case $r in "$HOME/.local/share/spike2-vpx/images/"*|"$PAD_HOME/.local/share/spike2-vpx/images/"*) return 0 ;; esac
+    c=$(readlink -f "$CACHE" 2>/dev/null) || return 1
     case $r in "$c"/*) return 0 ;; esac
     case $(cache_kind) in store|disk) ;; *) return 1 ;; esac
     [ -e "$r" ] && [ "$(stat -c %d "$r" 2>/dev/null)" = "$(stat -c %d "$c" 2>/dev/null)" ]
@@ -792,12 +798,12 @@ cache_pick() {
     local img="$1" label="$2" mode="${3:-sync}"
     local copy="$CACHE/$label.raw" stamp="$CACHE/$label.src"
     if [ "${PAD_CARD_CACHE:-1}" = 0 ]; then echo "$img"; return; fi
-    if ! cache_folder_ready; then
-        echo "[card] Windows cache folder is unavailable: $CACHE. Booting from the source image." >&2
+    if on_cache_disk "$img"; then
+        echo "[card] $(basename "$img") is already local - booting it where it lies" >&2
         echo "$img"; return
     fi
-    if on_cache_disk "$img"; then
-        echo "[card] $(basename "$img") lives on the card store already - booting it where it lies" >&2
+    if ! cache_folder_ready; then
+        echo "[card] Windows cache folder is unavailable: $CACHE. Booting from the source image." >&2
         echo "$img"; return
     fi
     local lib

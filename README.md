@@ -101,8 +101,12 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 Browse **Supported Tables** to find the table version for your game and open
 its download page where one is listed. In **Games**, **Get image from Stern**
 opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
-containing one `.raw`, or select a folder of raw images. The app reads the
-title and edition from the image and checks space for the optional cache.
+containing one `.raw`. You can select a ZIP on an SMB share using a UNC path or
+mapped drive. With **Cache images on first load** enabled, ZIP import saves one
+sparse image inside the local WSL runtime. The game starts from that image even
+when the share is disconnected. With caching disabled, ZIP import extracts a
+RAW into the app's Windows data folder. You can also select a folder of raw
+images to add multiple local cards.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
 existing prepared table. The app saves new conversions and their companion
 files beside the original table. Prepared pairings appear in the game library.

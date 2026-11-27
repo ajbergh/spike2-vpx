@@ -191,7 +191,7 @@ def merge(runs, gap):
     return [(a, b) for a, b in out]
 
 
-def plan(img):
+def plan(img, *, gap=GAP):
     """(runs, size, notes): the byte ranges to read, the image size, one line per partition."""
     size = os.path.getsize(img)
     runs, trimmed, notes = [], [], []
@@ -213,7 +213,7 @@ def plan(img):
         at = max(at, b)
     if at < size:
         runs.append((at, size))
-    runs = [(a, min(b, size)) for a, b in merge(runs, GAP) if a < size]
+    runs = [(a, min(b, size)) for a, b in merge(runs, gap) if a < size]
     return runs, size, notes
 
 

@@ -9,13 +9,14 @@ import os
 from pathlib import Path
 import re
 import shutil
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+import subprocess
+from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
 from urllib.parse import urlsplit
 from uuid import uuid4
 from xml.etree.ElementTree import ParseError, iterparse
 from zipfile import BadZipFile, ZipFile
 
-from spike2_vpx_setup import APP, DISTRO, RIG
+from spike2_vpx_setup import APP, DISTRO, RIG, distro_registration
 
 # The setup module loads the VPX kit from the same location as the console launcher.
 import padisplay
@@ -180,8 +181,6 @@ class Player:
 
     def import_archive(self, path, expected=None):
         source = file_of_type(path, ".zip")
-        directory = self.setup.data / "images"
-        directory.mkdir(parents=True, exist_ok=True)
         try:
             with ZipFile(source) as archive:
                 images = [member for member in archive.infolist()
@@ -190,39 +189,80 @@ class Player:
                 if len(images) != 1 or images[0].file_size == 0:
                     raise ValueError("Import a ZIP containing one non-empty .raw image, or extract the image yourself.")
                 member = images[0]
-                if member.file_size > shutil.disk_usage(directory).free:
-                    raise ValueError(f"Free up space on {directory.anchor} to extract this image "
-                                     f"({member.file_size / 1024**3:.1f} GiB required).")
-                # Use app-owned names. An archive entry cannot choose where we write.
-                with TemporaryDirectory(dir=directory) as stage:
-                    extracted = Path(stage) / "card.raw"
-                    with archive.open(member) as data, extracted.open("wb") as out:
-                        shutil.copyfileobj(data, out, length=1024 * 1024)
-                    game = self.inspect_image(extracted)
-                    if expected and game.title != expected.title:
-                        raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
-                    destination = directory / (uuid4().hex + ".raw")
-                    extracted.replace(destination)
+                with archive.open(member) as data:
+                    if padlaunch.cache_on():
+                        game = self.import_local_card(data, member.file_size, expected)
+                    else:
+                        game = self.extract_card(data, member.file_size, expected)
         except (BadZipFile, RuntimeError, NotImplementedError) as exc:
             raise ValueError(f"Unable to extract this ZIP. Download it again or extract the .raw manually. {exc}") from exc
-        return replace(game, image=str(destination), image_version=image_version(Path(member.filename).name)
+        return replace(game, image_version=image_version(Path(member.filename).name)
                        or image_version(source.name))
 
-    def prepare_image(self, path, expected=None):
-        imported = Path(path).suffix.casefold() == ".zip"
-        game = self.import_archive(path, expected) if imported else self.inspect_image(path)
+    def extract_card(self, data, size, expected):
+        directory = self.setup.data / "images"
+        directory.mkdir(parents=True, exist_ok=True)
+        if size > shutil.disk_usage(directory).free:
+            raise ValueError(f"Free up space on {directory.anchor} to extract this image "
+                             f"({size / 1024**3:.1f} GiB required).")
+        with TemporaryDirectory(dir=directory) as stage:
+            extracted = Path(stage) / "card.raw"
+            with extracted.open("wb") as out:
+                shutil.copyfileobj(data, out, length=1024 * 1024)
+            game = self.inspect_image(extracted)
+            self.check_image_title(game, expected)
+            destination = directory / (uuid4().hex + ".raw")
+            extracted.replace(destination)
+        return replace(game, image=str(destination))
+
+    def import_local_card(self, data, size, expected):
+        # The Windows process already has access to the ZIP, including on an SMB share.
+        # WSL only receives bytes, so it does not need the share mounted or credentials.
+        rig = padlaunch.padpath.to_wsl(str(RIG), DISTRO)
+        registration = distro_registration()
+        runtime_dir = registration[0] if registration else self.setup.runtime_dir
+        # Leave the same host-drive margin as the runtime cache. WSL's virtual disk
+        # can report free space even when its backing drive is almost full.
+        budget = max(0, shutil.disk_usage(runtime_dir.anchor).free - 4 * 1024**3)
+        command = padlaunch.wsl_head(DISTRO) + ["-e", "python3", "-B", rig + "/import_vpx_card.py",
+                                                str(size), str(budget), expected.title if expected else "-"]
+        with TemporaryFile() as output:
+            with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                                  env=dict(os.environ, WSL_UTF8="1"),
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as child:
+                try:
+                    with child.stdin as stream:
+                        shutil.copyfileobj(data, stream, length=1024 * 1024)
+                        # ZIP CRC checking finishes at EOF. Only publish after that succeeds.
+                        stream.write(b"\x01")
+                except BrokenPipeError:
+                    pass  # The importer stopped reading and reports the reason below.
+            output.seek(0)
+            reply = runtime._text(output.read()).strip()
+        try:
+            result = json.loads(reply.splitlines()[-1])
+        except (IndexError, ValueError) as exc:
+            raise ValueError(reply or "The SPIKE 2 runtime did not finish importing the image.") from exc
+        if child.returncode:
+            raise ValueError(result["error"])
+        game = Game(result["title"], result.get("image", ""))
+        self.check_image_title(game, expected)
+        return game
+
+    @staticmethod
+    def check_image_title(game, expected):
         if expected and game.title != expected.title:
             raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
+
+    def prepare_image(self, path, expected=None):
+        if Path(path).suffix.casefold() == ".zip":
+            return self.import_archive(path, expected), "Imported and verified the local image."
+        game = self.inspect_image(path)
+        self.check_image_title(game, expected)
         if not padlaunch.cache_on():
-            note = "Extracted and verified the ZIP image." if imported else "Read directly from the source image."
-            return game, note
-        try:
-            launch = padlaunch.Launch(game.title, game.image, dist=DISTRO, prepared=True)
-            info = launch.cache_check()
-        except Exception:
-            if imported:
-                Path(game.image).unlink(missing_ok=True)
-            raise
+            return game, "Read directly from the source image."
+        launch = padlaunch.Launch(game.title, game.image, dist=DISTRO, prepared=True)
+        info = launch.cache_check()
         return game, padlaunch.space_words(info or {})[1] + "."
 
     def layout(self, monitors):
