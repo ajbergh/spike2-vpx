@@ -15,3 +15,21 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
+
+  linux-runtime:
+    name: Linux runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install runtime test dependencies
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs gcc libegl1 libx11-6
+      - name: Exercise sparse card import
+        run: python -m unittest discover -s tests -p test_import_vpx_card_linux.py -v
+      - name: Check card mount script and build the LCD renderer
+        run: |
+          bash -n tools/spike2_emu/cardmount.sh
+          gcc -std=gnu17 -O2 -Wall -Werror=implicit-function-declaration \
+            -o "$RUNNER_TEMP/padglhost" tools/spike2_emu/padglhost.c -l:libEGL.so.1 -l:libX11.so.6
