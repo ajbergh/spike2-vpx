@@ -222,16 +222,19 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
     with ExitStack() as cleanup:
         cleanup.callback(launch.stop)
         command = [str(exe), "-ExtMinimized"]
+        target = vpx_lcd.fullscreen_target()
+        overlay = target is None and vpx_lcd.windowed_overlay()
+        if overlay:
+            command.append("-DisableTrueFullscreen")
         if disable_b2s:
             folder = cleanup.enter_context(TemporaryDirectory(prefix="spike2-vpx-b2s-"))
             ini = Path(folder) / "VPinballX.ini"
             b2s_disabled_ini(exe, ini)
             command.extend(["-Ini", str(ini)])
         command.extend(["-play", str(table)])
-        target = vpx_lcd.fullscreen_target()
         launch.windows_lcd = target
         launch.start()
-        if target:
+        if target is not None or overlay:
             cleanup.callback(vpx_lcd.Placement(launch, target).close)
         deadline = time.monotonic() + timeout
         rig = wait_for_rig(launch, deadline)

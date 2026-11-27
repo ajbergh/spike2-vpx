@@ -23,6 +23,9 @@ class PreparedLaunchTest(unittest.TestCase):
         display = patch.object(play.vpx_lcd, "fullscreen_target", return_value=None)
         self.fullscreen_target = display.start()
         self.addCleanup(display.stop)
+        overlay = patch.object(play.vpx_lcd, "windowed_overlay", return_value=False)
+        self.windowed_overlay = overlay.start()
+        self.addCleanup(overlay.stop)
 
     def test_raw_image_detection_prefers_a_unique_title_match(self):
         with TemporaryDirectory() as folder:
@@ -221,6 +224,33 @@ class PreparedLaunchTest(unittest.TestCase):
         placement.assert_called_once_with(launch, target)
         placement.return_value.close.assert_called_once_with()
         launch.stop.assert_called_once_with()
+
+    def test_windowed_lcd_uses_composited_vpx_and_lifetime_overlay(self):
+        launch = Mock(title="godzilla_le", slot=1)
+        rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/1/root")
+        self.windowed_overlay.return_value = True
+        with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
+                patch.object(play, "wait_for_rig", return_value=rig), \
+                patch.object(play, "wait_for_game"), \
+                patch.object(play.vpx_lcd, "Placement") as placement, \
+                patch.object(play.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+                patch.object(play.subprocess, "Popen") as popen:
+            play.play(launch, Path("VPinballX64.exe"), Path("table.vpx"), 30)
+        self.assertEqual(popen.call_args.args[0],
+                         ["VPinballX64.exe", "-ExtMinimized", "-DisableTrueFullscreen", "-play", "table.vpx"])
+        self.assertIsNone(launch.windows_lcd)
+        placement.assert_called_once_with(launch, None)
+        placement.return_value.close.assert_called_once_with()
+
+    def test_windowed_overlay_raises_without_moving_resizing_or_activating(self):
+        lcd = play.vpx_lcd
+        user32 = Mock()
+        lcd.Placement.keep_on_top(user32, 123)
+        hwnd, topmost, x, y, width, height, flags = user32.SetWindowPos.call_args.args
+        self.assertEqual(hwnd.value, 123)
+        self.assertEqual(topmost.value, lcd.ctypes.c_void_p(-1).value)
+        self.assertEqual((x, y, width, height), (0, 0, 0, 0))
+        self.assertEqual(flags, lcd.SWP_NOSIZE | lcd.SWP_NOMOVE | lcd.SWP_NOACTIVATE | lcd.SWP_ASYNCWINDOWPOS)
 
     def test_disabling_b2s_uses_and_removes_a_session_only_vpx_ini(self):
         launch = Mock(title="godzilla_le", slot=2)

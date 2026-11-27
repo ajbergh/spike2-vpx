@@ -3094,6 +3094,29 @@ static void disp_press(int x, int y, int xr, int yr, unsigned long t)
     disp_fixups = 0;                     /* the user's place, not ours */
 }
 
+/* Ctrl+wheel resizes the LCD from anywhere in the picture, keeping its aspect. */
+static void disp_zoom(int grow)
+{
+    if (disp_cur_fs || disp_windows_fullscreen(disp_want) || fb_w <= 0 || fb_h <= 0) return;
+    int screen = XDefaultScreen(xdpy);
+    int max_w = XDisplayWidth(xdpy, screen);
+    int height_limit = (int)((long)XDisplayHeight(xdpy, screen) * fb_w / fb_h);
+    if (max_w > height_limit) max_w = height_limit;
+    if (max_w <= 0) return;
+    int min_w = max_w < 240 ? max_w : 240;
+    int change = win_w / 8;
+    int width = grow ? win_w + change : win_w - change;
+    if (width < min_w) width = min_w;
+    if (width > max_w) width = max_w;
+    int height = (int)((long)width * fb_h / fb_w);
+    if (height < 1) height = 1;
+    XResizeWindow(xdpy, xwin, (unsigned)width, (unsigned)height);
+    XFlush(xdpy);
+    disp_dragged = disp_want.set;
+    disp_cfg_s = now_s();
+    disp_fixups = 0;
+}
+
 /* The game line again with this place and size: x y w h, and rx ry moved by
  * as much (the monitor's corner is x - rx). Every other line is kept. */
 static void disp_writeback(void)
@@ -3436,9 +3459,13 @@ static void win_pump(void)
             save_pending = 1;
             break;
         case 4:                        /* ButtonPress: x y x_root y_root at
-                                          ints 16-19, button at 21, time ul[7] */
-            if (ev.ul[4] == xwin && ev.i[21] == 1)
-                disp_button(ev.i[16], ev.i[17], ev.i[18], ev.i[19]);
+                                          ints 16-19, state at 20, button at 21 */
+            if (ev.ul[4] == xwin) {
+                if (ev.i[21] == 1)
+                    disp_button(ev.i[16], ev.i[17], ev.i[18], ev.i[19]);
+                else if ((ev.i[20] & (1 << 2)) && (ev.i[21] == 4 || ev.i[21] == 5))
+                    disp_zoom(ev.i[21] == 4);  /* ControlMask, wheel up or down */
+            }
             break;
         case 5:                        /* ButtonRelease */
             if (ev.ul[4] == xwin && ev.i[21] == 1) disp_down = 0;

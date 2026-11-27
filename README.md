@@ -211,6 +211,11 @@ Windows places the fullscreen LCD using the same display coordinates as
 When the cabinet and Windows display numbers differ, Cabinet shows both.
 The renderer starts at the selected screen's size for fullscreen play.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
+Hover over the LCD and use **Ctrl+scroll** to resize it, or drag its window
+border. When SPIKE 2 VPX starts a game with a windowed LCD, it keeps the LCD
+above the playfield and disables exclusive fullscreen for that VPX session.
+For a screen-filling playfield on one monitor, use VPX's borderless windowed
+mode at your desktop resolution.
 
 A managed backglass needs 64-bit B2S Server and a matching `.directb2s`
 file. The app carries over a matching file when it patches a table. Use

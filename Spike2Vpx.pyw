@@ -570,9 +570,10 @@ class PlayerWindow:
                 if lcd["primary"] and "playfield" not in roles:
                     text += " It can cover VPX if the playfield is also on that screen."
             elif windowed:
-                text = "The Stern LCD will run in a window."
+                text = "The Stern LCD stays above VPX. Hover over it and use Ctrl+scroll to resize."
             else:
-                text = "No spare screen is available. The Stern LCD will run in a window unless you pick a screen."
+                text = "No spare screen is available. The Stern LCD will stay above VPX in a window. "
+                text += "Hover over it and use Ctrl+scroll to resize."
             if layout.get("backglass") == cabinet.DISABLED_B2S:
                 text += " B2S will stay off on the next launch."
             self.cabinet_hint.configure(text=text)

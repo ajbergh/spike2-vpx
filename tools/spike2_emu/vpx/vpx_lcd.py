@@ -1,4 +1,4 @@
-"""Place the WSLg LCD on its assigned Windows display."""
+"""Keep the WSLg LCD visible during a Windows VPX session."""
 
 import ctypes
 from pathlib import Path
@@ -14,6 +14,13 @@ GWL_STYLE, GWL_EXSTYLE = -16, -20
 WS_FRAME = 0x00C00000 | 0x00040000  # WS_CAPTION | WS_THICKFRAME
 WS_EX_TOPMOST = 0x00000008
 SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_ASYNCWINDOWPOS = 0x0010, 0x0020, 0x4000
+SWP_NOSIZE, SWP_NOMOVE = 0x0001, 0x0002
+
+
+def windowed_overlay(board=None):
+    if sys.platform != "win32":
+        return False
+    return padisplay.load(Path(board or padlaunch.BOARD) / "display.conf")["mode"] in ("free", "window")
 
 
 def fullscreen_target(board=None):
@@ -50,7 +57,10 @@ class Placement:
     def __init__(self, launch, target):
         self.launch = launch
         self.target = target
-        self.launch.note(f"[display] Assigning the Stern LCD to Windows bounds {self.target}.")
+        if target is None:
+            self.launch.note("[display] Keeping the windowed Stern LCD above the playfield.")
+        else:
+            self.launch.note(f"[display] Assigning the Stern LCD to Windows bounds {self.target}.")
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.watch, name="Stern LCD placement", daemon=True)
         self.thread.start()
@@ -65,7 +75,7 @@ class Placement:
         context.restype = ctypes.c_void_p
         old = context(ctypes.c_void_p(-4))  # Per-monitor v2, matching padisplay's physical bounds.
         prefix = f"[rig {self.launch.slot}: {self.launch.label}] "
-        frame_file = self.launch.lcd_frame_path()
+        frame_file = self.launch.lcd_frame_path() if self.target is not None else None
         confirmed = None
         reported_error = False
         try:
@@ -73,12 +83,15 @@ class Placement:
                 hwnd = padcontroller.find_kit_window(" - Stern Spike 2 emulator", title_prefix=prefix)
                 try:
                     if hwnd and not user32.IsIconic(ctypes.c_void_p(hwnd)):
-                        insets = frame_insets(frame_file)
-                        bounds = outer_bounds(self.target, insets) if insets is not None else self.target
-                        if self.place(user32, hwnd, bounds) and insets is not None and confirmed != (hwnd, insets):
-                            self.launch.note(f"[display] Stern LCD content fits {self.target}, "
-                                             f"WSLg frame insets {insets}.")
-                            confirmed = hwnd, insets
+                        if frame_file is None:
+                            self.keep_on_top(user32, hwnd)
+                        else:
+                            insets = frame_insets(frame_file)
+                            bounds = outer_bounds(self.target, insets) if insets is not None else self.target
+                            if self.place(user32, hwnd, bounds) and insets is not None and confirmed != (hwnd, insets):
+                                self.launch.note(f"[display] Stern LCD content fits {self.target}, "
+                                                 f"WSLg frame insets {insets}.")
+                                confirmed = hwnd, insets
                 except OSError as exc:
                     if not reported_error:
                         self.launch.note(f"[display] Windows could not position the Stern LCD yet: {exc}")
@@ -87,6 +100,12 @@ class Placement:
         finally:
             if old:
                 context(ctypes.c_void_p(old))
+
+    @staticmethod
+    def keep_on_top(user32, hwnd):
+        flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS
+        if not user32.SetWindowPos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-1), 0, 0, 0, 0, flags):
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def place(self, user32, hwnd, bounds):
         window = ctypes.c_void_p(hwnd)
