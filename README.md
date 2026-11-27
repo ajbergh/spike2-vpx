@@ -6,25 +6,22 @@ playfield and the SPIKE 2 runtime runs the game, LCD, and audio. The bundled
 
 ## Download for Windows
 
-### [Download SPIKE 2 VPX v0.1.0 for Windows x64](https://github.com/ajbergh/spike2-vpx/releases/download/v0.1.0/SPIKE2-VPX-Setup-0.1.0-x64.exe)
+### [Download SPIKE 2 VPX v0.2.0 for Windows x64](https://github.com/ajbergh/spike2-vpx/releases/download/v0.2.0/SPIKE2-VPX-Setup-0.2.0-x64.exe)
 
-[Release notes](https://github.com/ajbergh/spike2-vpx/releases/tag/v0.1.0) ·
-[SHA-256 checksum](https://github.com/ajbergh/spike2-vpx/releases/download/v0.1.0/SPIKE2-VPX-Setup-0.1.0-x64.exe.sha256) ·
+[Release notes](https://github.com/ajbergh/spike2-vpx/releases/tag/v0.2.0) ·
+[SHA-256 checksum](https://github.com/ajbergh/spike2-vpx/releases/download/v0.2.0/SPIKE2-VPX-Setup-0.2.0-x64.exe.sha256) ·
 [Setup instructions](#set-up)
 
 Requires Windows 10 build 19044 or later (x64), WSL 2, and Visual Pinball X
 10.8 or later (x64). Bring your own Stern SPIKE 2 SD-card image and compatible
 VPX table.
 
-### Initial Release
+### New in v0.2.0
 
-- The Windows launcher sets up a private WSL 2 runtime, imports SPIKE 2
-  images, and prepares and launches [supported VPX tables](#supported-vpx-tables).
-- Cabinet setup supports separate playfield, backglass, and Stern LCD displays,
-  saved display profiles, and launch scripts for front ends.
-- [Stern Expression Lighting](#cabinet-lighting) drives compatible Teensy LED
-  controllers. The Lighting tab shows which outputs each image provides and
-  can mirror speaker patterns onto blades when blade data is unavailable.
+- Choose separate drives and folders for the WSL emulator and first-load
+  SD-card cache during installation.
+- The desktop and cabinet views show when a cache copy may make startup
+  take longer than usual.
 
 ## Credits
 

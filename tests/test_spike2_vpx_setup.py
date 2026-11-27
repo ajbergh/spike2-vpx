@@ -120,7 +120,7 @@ class StandaloneSetupTest(unittest.TestCase):
             self.app.install_runtime()
         distro, target, archive = import_image.call_args.args
         self.assertEqual(distro, "SPIKE2-VPX")
-        self.assertEqual(Path(target), self.app.runtime_dir)
+        self.assertEqual(Path(target), self.app.runtime_dir.resolve())
         self.assertEqual(Path(archive).parent, self.app.data / "downloads")
 
     @unittest.skipUnless(sys.platform == "win32", "Windows installer paths")
