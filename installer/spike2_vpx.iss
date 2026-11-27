@@ -76,7 +76,7 @@ end;
 procedure InitializeWizard;
 begin
   StoragePage := CreateInputQueryPage(wpSelectDir, 'SPIKE 2 storage',
-    'Choose where the emulator and first-load SD-card copies are stored.',
+    'Choose where the emulator, compact ZIP imports, and first-load SD-card copies are stored.',
     'Choose local Windows folders or leave them blank. The default runtime is under %LOCALAPPDATA%\Spike2Vpx, and the default cache is in WSL. Existing runtimes stay in place.');
   AddStorageFolder('Emulator runtime folder (empty folder for a new runtime)', 'RuntimeFolder');
   AddStorageFolder('SD-card cache location (uses a SPIKE2-VPX-cardcache subfolder)', 'CacheFolder');

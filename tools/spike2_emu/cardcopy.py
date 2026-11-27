@@ -237,6 +237,18 @@ def copy(img, out, runs, size):
         dst.truncate(size)
 
 
+def unused_ranges(img):
+    """Yield the complement of the filesystem's used ranges at their exact offsets."""
+    runs, size, _ = plan(img, gap=1)
+    offset = 0
+    for start, end in runs:
+        if start > offset:
+            yield offset, start
+        offset = end
+    if offset < size:
+        yield offset, size
+
+
 def main(argv):
     if len(argv) == 2 and argv[0] == "--plan":
         runs, size, notes = plan(argv[1])

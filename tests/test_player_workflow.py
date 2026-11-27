@@ -2,6 +2,7 @@ from base64 import b64encode
 import json
 import os
 from pathlib import Path
+import stat
 from subprocess import CompletedProcess, run
 import sys
 import time
@@ -263,6 +264,33 @@ def test_zip_import_passes_only_the_member_to_the_local_runtime(player, tmp_path
     assert game.image == local.image
     assert game.image_version == "1.12.0"
     assert not (tmp_path / "images").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows sparse cache files")
+def test_zip_import_uses_the_installer_cache_and_preserves_sparse_image(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "Selected cache"
+    (tmp_path / "storage.ini").write_text(f"[Storage]\ncache = {cache}\n", encoding="utf-8")
+    monkeypatch.setattr(module, "APP", tmp_path)
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: True)
+    source = tmp_path / "Stern image.zip"
+    block = 128 * 1024
+    with ZipFile(source, "w") as archive:
+        archive.writestr("card.raw", b"x" * block + b"y" * block + bytes(block))
+
+    def inspect(image):
+        assert image.read_bytes()[block] == ord("y")
+        return Game("godzilla_le", str(image))
+
+    monkeypatch.setattr(player, "inspect_image", inspect)
+    monkeypatch.setattr(module.cardcopy, "unused_ranges", lambda _: [(block, 2 * block)])
+    game, _ = player.prepare_image(source)
+    image = Path(game.image)
+    assert image.parent == cache / "SPIKE2-VPX-cardcache" / "imports"
+    assert list(image.parent.iterdir()) == [image]
+    assert image.stat().st_file_attributes & stat.FILE_ATTRIBUTE_SPARSE_FILE
+    assert image.read_bytes() == b"x" * block + bytes(2 * block)
 
 
 def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path, monkeypatch):

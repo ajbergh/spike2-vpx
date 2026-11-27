@@ -22,10 +22,11 @@ from spike2_vpx_setup import APP, DISTRO, RIG, distro_registration
 # The setup module loads the VPX kit from the same location as the console launcher.
 import padisplay
 import padlaunch
+import cardcopy
 import padlighting
 import padvpx
 import play_spike2
-from spike2_vpx import cabinet, runtime, sessions, support
+from spike2_vpx import cabinet, runtime, sessions, storage, support
 
 STERN_IMAGES = "https://www.sternpinball.com/support/sd-cards/"
 BACKGLASS_ART = APP / "assets" / "backglasses"
@@ -201,20 +202,30 @@ class Player:
                        or image_version(source.name))
 
     @staticmethod
-    def copy_card(data, out, size, message, progress):
-        if not progress:
+    def copy_card(data, out, size, message, progress, *, sparse=False):
+        if not progress and not sparse:
             shutil.copyfileobj(data, out, length=1024 * 1024)
             return
+        chunk = 128 * 1024 if sparse else 1024 * 1024
+        zero = bytes(chunk) if sparse else None
         done = 0
-        progress(message, 0, size)
+        if progress:
+            progress(message, 0, size)
         next_update = monotonic() + 0.25
-        while block := data.read(1024 * 1024):
-            out.write(block)
+        while block := data.read(chunk):
+            if zero is not None and block == zero[:len(block)]:
+                out.seek(len(block), os.SEEK_CUR)
+            else:
+                out.write(block)
             done += len(block)
             now = monotonic()
-            if done == size or now >= next_update:
+            if progress and (done == size or now >= next_update):
                 progress(message, done, size)
                 next_update = now + 0.25
+        if sparse:
+            if done != size:
+                raise ValueError("The ZIP image transfer stopped before it was complete.")
+            out.truncate(size)
 
     def extract_card(self, data, size, expected, *, progress=None):
         directory = self.setup.data / "images"
@@ -235,6 +246,9 @@ class Player:
         return replace(game, image=str(destination))
 
     def import_local_card(self, data, size, expected, *, progress=None):
+        cache = storage.cache_folder(APP)
+        if cache is not None:
+            return self.import_windows_card(data, size, expected, cache / "imports", progress=progress)
         # The Windows process already has access to the ZIP, including on an SMB share.
         # WSL only receives bytes, so it does not need the share mounted or credentials.
         rig = padlaunch.padpath.to_wsl(str(RIG), DISTRO)
@@ -269,6 +283,29 @@ class Player:
         game = Game(result["title"], result.get("image", ""))
         self.check_image_title(game, expected)
         return game
+
+    def import_windows_card(self, data, size, expected, directory, *, progress=None):
+        directory.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=directory) as stage:
+            extracted = Path(stage) / "card.raw"
+            with extracted.open("w+b") as out:
+                try:
+                    storage.set_sparse(out)
+                except OSError as exc:
+                    raise ValueError(f"Could not create a sparse file in {directory}. "
+                                     f"Use a cache folder on a drive that supports sparse files. {exc}") from exc
+                self.copy_card(data, out, size, "Copying the SD-card image to the selected cache…", progress,
+                               sparse=True)
+                out.flush()
+                if progress:
+                    progress("Verifying and compacting the local image…")
+                game = self.inspect_image(extracted)
+                self.check_image_title(game, expected)
+                storage.set_sparse(out, unused=cardcopy.unused_ranges(extracted))
+                os.fsync(out.fileno())
+            destination = directory / (uuid4().hex + ".raw")
+            extracted.replace(destination)
+        return replace(game, image=str(destination))
 
     @staticmethod
     def check_image_title(game, expected):

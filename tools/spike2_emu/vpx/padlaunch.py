@@ -479,11 +479,11 @@ class Launch:
             app = Path(RIG).parents[1]
             if str(app) not in sys.path:
                 sys.path.append(str(app))
-            from spike2_vpx.storage import installed_folder
+            from spike2_vpx.storage import cache_folder
 
-            folder = installed_folder(app, "cache")
+            folder = cache_folder(app)
             if folder is not None:
-                cache = padpath.to_wsl(str(folder / "SPIKE2-VPX-cardcache"), self.distro)
+                cache = padpath.to_wsl(str(folder), self.distro)
                 drive = padpath.to_wsl(folder.anchor, self.distro).rstrip("/")
                 return ["PAD_CARD_CACHE_DIR=" + cache, "PAD_CARD_CACHE_DRIVE=" + drive]
         drive = host_drive(self.distro)

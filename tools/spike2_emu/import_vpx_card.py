@@ -37,15 +37,12 @@ def receive(source, image, size, budget):
 def punch_unused(path, image):
     # Reuse the cache copier's filesystem allocation map. The seek-gap heuristic
     # is for reading off slow drives and is unnecessary when punching holes.
-    runs, size, _ = cardcopy.plan(path, gap=1)
     fallocate = ctypes.CDLL(None, use_errno=True).fallocate
     fallocate.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_int64, ctypes.c_int64)
     punch_keep_size = 0x02 | 0x01  # FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE
-    offset = 0
-    for start, end in (*runs, (size, size)):
-        if start > offset and fallocate(image.fileno(), punch_keep_size, offset, start - offset):
+    for start, end in cardcopy.unused_ranges(path):
+        if fallocate(image.fileno(), punch_keep_size, start, end - start):
             raise OSError(os.strerror(ctypes.get_errno()))
-        offset = end
 
 
 def import_card(source, directory, size, budget, expected):
