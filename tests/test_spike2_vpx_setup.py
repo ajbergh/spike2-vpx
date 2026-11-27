@@ -123,6 +123,28 @@ class StandaloneSetupTest(unittest.TestCase):
         self.assertEqual(Path(target), self.app.runtime_dir.resolve())
         self.assertEqual(Path(archive).parent, self.app.data / "downloads")
 
+    def test_runtime_install_reports_download_verification_and_import(self):
+        events = []
+
+        def download(image, destination, *, log, progress, verifying):
+            progress(image.size, image.size)
+            verifying()
+
+        with patch.object(setup, "distro_registration", return_value=None), \
+                patch.object(setup.payloads, "verify", return_value=(False, "missing")), \
+                patch.object(setup.runtime, "_need_room"), patch.object(setup.runtime, "import_image"), \
+                patch.object(setup.payloads, "download", side_effect=download):
+            self.app.install_runtime(lambda *event: events.append(event))
+
+        size = setup.runtime.IMAGE.size
+        self.assertEqual(events, [
+            ("Checking for a verified SPIKE 2 runtime download…",),
+            ("Downloading the SPIKE 2 runtime…", 0, size),
+            ("Downloading the SPIKE 2 runtime…", size, size),
+            ("Verifying the runtime download…",),
+            ("Installing the SPIKE 2 runtime in WSL…",),
+        ])
+
     @unittest.skipUnless(sys.platform == "win32", "Windows installer paths")
     def test_installer_runtime_folder_is_used_for_import_and_remembered(self):
         install = self.app.data / "App"

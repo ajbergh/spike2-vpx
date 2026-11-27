@@ -346,7 +346,7 @@ class Setup:
                            runtime._why(out), self.platform_log)
             raise RuntimeError("WSL setup failed or administrator permission was declined.")
 
-    def install_runtime(self):
+    def install_runtime(self, progress=None):
         if distro_registration() is not None:
             raise RuntimeError(f"{DISTRO} already exists. Check its status before attempting another import.")
         target = self.runtime_dir.resolve()
@@ -357,18 +357,27 @@ class Setup:
         stamp = image.sha256[:12]
         cache = self.data / "downloads" / f"{stamp}-{image.filename}"
         cache.parent.mkdir(parents=True, exist_ok=True)
+        if progress:
+            progress("Checking for a verified SPIKE 2 runtime download…")
         if not payloads.verify(str(cache), image)[0]:
             runtime._need_room(str(cache.parent), image.size + runtime.DOWNLOAD_SLACK,
                                "download the SPIKE 2 runtime")
-            payloads.download(image, str(cache), log=self.log.info)
+            if progress:
+                progress("Downloading the SPIKE 2 runtime…", 0, image.size)
+            payloads.download(image, str(cache), log=self.log.info,
+                              progress=(lambda done, total: progress("Downloading the SPIKE 2 runtime…", done, total))
+                              if progress else None,
+                              verifying=(lambda: progress("Verifying the runtime download…")) if progress else None)
+        if progress:
+            progress("Installing the SPIKE 2 runtime in WSL…")
         runtime.import_image(DISTRO, str(target), str(cache))
         self.settings["runtime_dir"] = str(target)
         self.save()
 
-    def repair(self, key, action):
+    def repair(self, key, action, *, progress=None):
         steps = {"install_wsl": lambda: self.install_platform("Install"),
                  "update_wsl": lambda: self.install_platform("Update"),
-                 "install_runtime": self.install_runtime,
+                 "install_runtime": lambda: self.install_runtime(progress),
                  "convert_runtime": self.convert_runtime,
                  "repair_arm": self.repair_arm,
                  "register_controller": lambda: self.controller("register")}
@@ -376,7 +385,14 @@ class Setup:
         self.save()
         self.log.info("Setting up %s", ROWS[key])
         try:
+            if progress:
+                message = f"Setting up {ROWS[key]}…"
+                if action in ("install_wsl", "update_wsl", "register_controller"):
+                    message += " Check for a Windows administrator prompt."
+                progress(message)
             steps[action]()
+            if progress:
+                progress("Checking the installation…")
             checks = self.checks()
             if checks[key].state in ("Ready", "Detected", "Restart required"):
                 return checks
@@ -390,4 +406,6 @@ class Setup:
                 detail = VIRTUALIZATION_GUIDANCE
             self.settings["failure"] = {"row": key, "detail": detail}
             self.save()
+            if progress:
+                progress("Checking what needs attention…")
             return self.checks()

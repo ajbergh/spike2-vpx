@@ -211,12 +211,14 @@ def test_zip_import_extracts_one_verified_card_without_using_archive_paths(playe
 
     player.inspect_image = inspect
     monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
-    game, _ = player.prepare_image(source)
+    events = Mock()
+    game, _ = player.prepare_image(source, progress=events)
     assert game.title == "godzilla_le"
     assert Path(game.image).parent == tmp_path / "images"
     assert Path(game.image).read_bytes() == b"card"
     assert list((tmp_path / "images").iterdir()) == [Path(game.image)]
     assert source.read_bytes() == original
+    assert [call.args[1:] for call in events.call_args_list] == [(0, 4), (4, 4), ()]
 
 
 def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(player, tmp_path, monkeypatch):
@@ -247,15 +249,17 @@ def test_zip_import_passes_only_the_member_to_the_local_runtime(player, tmp_path
     local = Game("godzilla_le", r"\\wsl.localhost\SPIKE2-VPX\home\pad\card.raw")
     expected = Game("godzilla_le", "old.raw")
 
-    def import_local(data, size, selected):
+    def import_local(data, size, selected, *, progress):
         assert data.read() == b"card"
         assert size == 4
         assert selected == expected
+        assert progress is events
         return local
 
     monkeypatch.setattr(module.padlaunch, "cache_on", lambda: True)
     monkeypatch.setattr(player, "import_local_card", import_local)
-    game, _ = player.prepare_image(source, expected)
+    events = Mock()
+    game, _ = player.prepare_image(source, expected, progress=events)
     assert game.image == local.image
     assert game.image_version == "1.12.0"
     assert not (tmp_path / "images").exists()

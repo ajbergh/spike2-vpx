@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
+from time import monotonic
 from urllib.parse import urlsplit
 from uuid import uuid4
 from xml.etree.ElementTree import ParseError, iterparse
@@ -179,7 +180,7 @@ class Player:
             raise ValueError(error)
         return Game(json.loads(out.stdout)["title"], str(image), image_version=image_version(image.name))
 
-    def import_archive(self, path, expected=None):
+    def import_archive(self, path, expected=None, *, progress=None):
         source = file_of_type(path, ".zip")
         try:
             with ZipFile(source) as archive:
@@ -191,15 +192,31 @@ class Player:
                 member = images[0]
                 with archive.open(member) as data:
                     if padlaunch.cache_on():
-                        game = self.import_local_card(data, member.file_size, expected)
+                        game = self.import_local_card(data, member.file_size, expected, progress=progress)
                     else:
-                        game = self.extract_card(data, member.file_size, expected)
+                        game = self.extract_card(data, member.file_size, expected, progress=progress)
         except (BadZipFile, RuntimeError, NotImplementedError) as exc:
             raise ValueError(f"Unable to extract this ZIP. Download it again or extract the .raw manually. {exc}") from exc
         return replace(game, image_version=image_version(Path(member.filename).name)
                        or image_version(source.name))
 
-    def extract_card(self, data, size, expected):
+    @staticmethod
+    def copy_card(data, out, size, message, progress):
+        if not progress:
+            shutil.copyfileobj(data, out, length=1024 * 1024)
+            return
+        done = 0
+        progress(message, 0, size)
+        next_update = monotonic() + 0.25
+        while block := data.read(1024 * 1024):
+            out.write(block)
+            done += len(block)
+            now = monotonic()
+            if done == size or now >= next_update:
+                progress(message, done, size)
+                next_update = now + 0.25
+
+    def extract_card(self, data, size, expected, *, progress=None):
         directory = self.setup.data / "images"
         directory.mkdir(parents=True, exist_ok=True)
         if size > shutil.disk_usage(directory).free:
@@ -208,14 +225,16 @@ class Player:
         with TemporaryDirectory(dir=directory) as stage:
             extracted = Path(stage) / "card.raw"
             with extracted.open("wb") as out:
-                shutil.copyfileobj(data, out, length=1024 * 1024)
+                self.copy_card(data, out, size, "Extracting the SD-card image…", progress)
+            if progress:
+                progress("Verifying the SD-card image…")
             game = self.inspect_image(extracted)
             self.check_image_title(game, expected)
             destination = directory / (uuid4().hex + ".raw")
             extracted.replace(destination)
         return replace(game, image=str(destination))
 
-    def import_local_card(self, data, size, expected):
+    def import_local_card(self, data, size, expected, *, progress=None):
         # The Windows process already has access to the ZIP, including on an SMB share.
         # WSL only receives bytes, so it does not need the share mounted or credentials.
         rig = padlaunch.padpath.to_wsl(str(RIG), DISTRO)
@@ -232,9 +251,11 @@ class Player:
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as child:
                 try:
                     with child.stdin as stream:
-                        shutil.copyfileobj(data, stream, length=1024 * 1024)
+                        self.copy_card(data, stream, size, "Copying the SD-card image to local storage…", progress)
                         # ZIP CRC checking finishes at EOF. Only publish after that succeeds.
                         stream.write(b"\x01")
+                    if progress:
+                        progress("Verifying and compacting the local image…")
                 except BrokenPipeError:
                     pass  # The importer stopped reading and reports the reason below.
             output.seek(0)
@@ -254,13 +275,15 @@ class Player:
         if expected and game.title != expected.title:
             raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
 
-    def prepare_image(self, path, expected=None):
+    def prepare_image(self, path, expected=None, *, progress=None):
         if Path(path).suffix.casefold() == ".zip":
-            return self.import_archive(path, expected), "Imported and verified the local image."
+            return self.import_archive(path, expected, progress=progress), "Imported and verified the local image."
         game = self.inspect_image(path)
         self.check_image_title(game, expected)
         if not padlaunch.cache_on():
             return game, "Read directly from the source image."
+        if progress:
+            progress("Checking space for the SD-card cache…")
         launch = padlaunch.Launch(game.title, game.image, dist=DISTRO, prepared=True)
         info = launch.cache_check()
         return game, padlaunch.space_words(info or {})[1] + "."
@@ -440,7 +463,7 @@ class Player:
             return frozenset(roles)
         return None
 
-    def play(self, game, progress, timeout=180, *, lighting_update=None, cache_update=None):
+    def play(self, game, progress, timeout=180, *, lighting_update=None, cache_update=None, activity=None):
         exe = self.setup.vpx_executable()
         if exe is None or self.setup.check_vpx().state != "Ready":
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
@@ -464,7 +487,7 @@ class Player:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
         launch = padlaunch.Launch(title, game.image, dist=DISTRO, minutes=0, prepared=True,
-                                  audio_control=str(self.audio_path), cache_update=cache_update)
+                                  audio_control=str(self.audio_path), cache_update=cache_update, activity=activity)
         started = False
         lighting_record = self.lighting_record(game)
 

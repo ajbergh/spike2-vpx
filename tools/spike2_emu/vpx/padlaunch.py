@@ -38,6 +38,7 @@ if RIG not in sys.path:
     sys.path.insert(0, RIG)
 
 import padpath    # noqa: E402
+from padloading import COPYING  # noqa: E402
 
 DATA_ROOT = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Spike2Vpx")
 KIT = os.path.join(DATA_ROOT, "vpx.json")
@@ -425,12 +426,14 @@ class Launch:
     """One run started for a table: a slot, a watch.sh, and the stop for it."""
 
     def __init__(self, title, card, dist=None, minutes=240, *, game_dir=None, prepared=False,
-                 audio_control=None, cache_update=None):
+                 audio_control=None, cache_update=None, activity=None):
         self.title = game_for(title)
         self.card = card
         self.game_dir = game_dir
         self.audio_control = audio_control
         self.cache_update = cache_update
+        self.activity = activity
+        self.cache_log_offset = None
         self.windows_lcd = None
         self.lighting_topper = False
         self.lighting_scan = ""
@@ -605,6 +608,8 @@ class Launch:
             log(why)
             raise RuntimeError(why)
         if self.prepared and self.distro == "SPIKE2-VPX":
+            if self.activity:
+                self.activity("Checking ARM execution in the SPIKE 2 runtime…")
             cmd = wsl_head(self.distro, root=True) + ["-e", "bash", self.rig_wsl + "/vpx_arm_exec.sh", "repair"]
             self.note("[setup] Checking ARM execution in the SPIKE 2 runtime.")
             with open(self.logfile, "ab") as out:
@@ -614,6 +619,8 @@ class Launch:
                 raise RuntimeError("WSL could not start the ARM guest. Open Setup and run Repair. See " + self.logfile)
         base = self.base_rig()
         if base:
+            if self.activity:
+                self.activity("Preparing the SPIKE 2 filesystem…")
             card = padpath.to_wsl(self.card, self.distro) if self.card else ""
             cmd = wsl_head(self.distro) + [
                 "-e", "bash", self.rig_wsl + "/prepare_vpx_root.sh", base, card,
@@ -632,13 +639,19 @@ class Launch:
         # no room for the copy (the game reads the image where it lies, 2.5
         # minutes to attract instead of 40 s) says so instead of "Reading the
         # card image" for all of them. Never a refusal: a slow game beats none.
+        if self.activity:
+            self.activity("Checking space for the SD-card cache…")
         self.check = self.cache_check()
+        copying = False
         if self.check:
             state, words = space_words(self.check)
             self.note("[card-check] %s: %s" % (state, words))
             log("card check for %s: %s: %s" % (self.title, state, words))
-            if self.cache_update and state in ("room", "evict", "copying"):
+            copying = state in ("room", "evict", "copying")
+            if self.cache_update and copying:
                 self.cache_update("Caching the SD-card image. This launch may take longer than usual.")
+        if self.activity:
+            self.activity("Preparing the SD-card cache…" if copying else "Starting Stern…")
         self._start_watch()
         log("started %s on slot %d from %s (distro %s, log %s)"
             % (self.title, self.slot, self.card, self.distro or "default", self.logfile))
@@ -655,8 +668,34 @@ class Launch:
             self.lcd_frame_path().unlink(missing_ok=True)
         cmd = head + self.env() + ["bash", "%s/watch.sh" % self.rig_wsl, str(self.minutes)]
         with open(self.logfile, "ab") as out:
+            if self.activity and self.card:
+                self.cache_log_offset = out.tell()
             self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
                                          creationflags=_CREATE_NO_WINDOW)
+
+    def poll_cache_progress(self):
+        if self.cache_log_offset is None:
+            return
+        latest = None
+        try:
+            with open(self.logfile, "rb") as stream:
+                stream.seek(self.cache_log_offset)
+                for raw in stream:
+                    if not raw.endswith(b"\n"):
+                        break  # Wait for the writer to finish the line.
+                    self.cache_log_offset = stream.tell()
+                    line = raw.decode("utf-8", "replace")
+                    if copy := COPYING.match(line):
+                        done, total, _ = map(int, copy.groups())
+                        latest = ("Copying the SD-card image into the cache…", done * 2**20, total * 2**20)
+                    elif line.startswith(("[card] local cache ready", "[card] using local cache")):
+                        latest = ("Starting Stern from the local cache…",)
+                    elif line.startswith(("[card] copy stalled", "[card] cache not usable", "[card] disk too full")):
+                        latest = ("Reading the SD-card image from its source…",)
+        except OSError:
+            return
+        if latest:
+            self.activity(*latest)
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None

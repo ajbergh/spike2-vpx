@@ -109,6 +109,7 @@ def startup_error(launch):
 
 def wait_for_rig(launch, deadline):
     while launch.alive() and time.monotonic() < deadline:
+        launch.poll_cache_progress()
         record = padcontroller.Rig.board_slot(launch.slot)
         if record and record.get("label") == launch.label:
             if record.get("game") != launch.title:
@@ -122,6 +123,7 @@ def wait_for_game(launch, rig, deadline, player=None):
     while launch.alive() and time.monotonic() < deadline:
         if player is not None and player.poll() is not None:
             return False
+        launch.poll_cache_progress()
         if padcontroller.block_in_wsl(rig, timeout=min(5, max(0.1, deadline - time.monotonic()))):
             return True
         time.sleep(0.5)

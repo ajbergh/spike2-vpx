@@ -148,6 +148,27 @@ class PreparedLaunchTest(unittest.TestCase):
                     if events.notice.called:
                         self.assertIn("longer than usual", events.notice.call_args.args[0])
 
+    def test_cache_progress_reads_only_complete_lines_from_the_current_run(self):
+        mod = play.padlaunch
+        with patch.object(mod.padpath, "to_wsl", return_value="/rig"), \
+                patch.object(mod, "distro", return_value="SPIKE2-VPX"):
+            activity = Mock()
+            launch = mod.Launch("godzilla_le", "/card.raw", activity=activity)
+            log = Path(launch.logfile)
+            old_run = b"[card] copying card.raw: 99 / 100 MB (99%)\n"
+            log.write_bytes(old_run + b"[card] copying card.raw: 25 / 100 MB (25%)")
+            launch.cache_log_offset = len(old_run)
+            launch.poll_cache_progress()
+            activity.assert_not_called()
+            with log.open("ab") as stream:
+                stream.write(b"\n")
+            launch.poll_cache_progress()
+            activity.assert_called_once_with("Copying the SD-card image into the cache…", 25 * 2**20, 100 * 2**20)
+            with log.open("ab") as stream:
+                stream.write(b"[card] local cache ready - booting from it\n")
+            launch.poll_cache_progress()
+            activity.assert_called_with("Starting Stern from the local cache…")
+
     def test_arm_repair_failure_stops_before_card_extraction(self):
         mod = play.padlaunch
         with patch.object(mod.padpath, "to_wsl", return_value="/rig"), \

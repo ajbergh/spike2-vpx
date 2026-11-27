@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import queue
 import threading
+from time import monotonic
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
@@ -40,6 +41,11 @@ def configure_style(root):
     style.configure("CabinetText.TLabel", font=("Segoe UI", 17))
     style.configure("Section.TLabel", font=("Segoe UI", 12, "bold"))
     style.configure("Hint.TLabel", foreground=MUTED)
+    style.configure("Activity.TFrame", background=SURFACE)
+    style.configure("Activity.TLabel", background=SURFACE, foreground=TEXT)
+    style.configure("ActivityDetail.TLabel", background=SURFACE, foreground=MUTED)
+    style.configure("Activity.Horizontal.TProgressbar", background=ACCENT, bordercolor=SURFACE,
+                    lightcolor=ACCENT, darkcolor=ACCENT, thickness=8)
     style.configure("TButton", background=SURFACE, padding=(10, 5))
     style.map("TButton", background=[("active", "#35475d")], foreground=[("disabled", "#8595a8")])
     style.configure("Primary.TButton", background=ACCENT, foreground=BACKGROUND, padding=(18, 9),
@@ -126,6 +132,11 @@ class PlayerWindow:
         self.cache_notice = ""
         self.lighting_notice = ""
         self.details_open = False
+        self.activity_phase = tk.StringVar()
+        self.activity_detail = tk.StringVar()
+        self.activity_started = 0.0
+        self.activity_bytes = ""
+        self.activity_widgets = []
         root.title("SPIKE 2 VPX")
         root.geometry("960x730")
         root.minsize(840, 660)
@@ -163,15 +174,25 @@ class PlayerWindow:
         self.build_cabinet_mode()
 
         status = ttk.Frame(page)
-        status.pack(fill="x", pady=(12, 0))
+        status.pack(side="bottom", fill="x", pady=(12, 0), before=self.tabs)
         self.summary = ttk.Label(status, wraplength=650, justify="left")
-        self.summary.pack(side="left", fill="x", expand=True)
-        self.progress = ttk.Progressbar(status, mode="indeterminate", length=110)
-        self.progress.pack(side="right", padx=(12, 0))
+        self.summary.pack(fill="x")
+        self.build_activity(status)
         self.tabs.select(self.setup_page)
         self.reload_library()
         self.check_again()
         self.tabs.bind("<<NotebookTabChanged>>", self.tab_changed, add="+")
+
+    def build_activity(self, parent):
+        panel = ttk.Frame(parent, style="Activity.TFrame", padding=(12, 8))
+        panel.columnconfigure(0, weight=1)
+        ttk.Label(panel, textvariable=self.activity_phase, style="Activity.TLabel",
+                  wraplength=560).grid(row=0, column=0, sticky="w")
+        ttk.Label(panel, textvariable=self.activity_detail, style="ActivityDetail.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(12, 0))
+        bar = ttk.Progressbar(panel, style="Activity.Horizontal.TProgressbar")
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.activity_widgets.append((panel, bar))
 
     def build_games(self):
         page = self.games_page
@@ -354,6 +375,7 @@ class PlayerWindow:
         self.cabinet_status.pack(anchor="w")
         ttk.Label(detail, textvariable=self.launch_text, style="CabinetText.TLabel",
                   wraplength=630, justify="left").pack(anchor="w")
+        self.build_activity(detail)
         ttk.Label(self.cockpit, text="Up / Down or Shift keys to browse  ·  Enter to select  ·  Esc to exit",
                   style="Hint.TLabel").pack(anchor="w", pady=(20, 0))
         self.cabinet_list.bind("<Return>", lambda _: self.cabinet_play.invoke())
@@ -1013,7 +1035,11 @@ class PlayerWindow:
             return
         self.busy = True
         self.summary.configure(text=message)
-        self.progress.start(12)
+        self.summary.pack_forget()
+        self.activity_started = monotonic()
+        for panel, _ in self.activity_widgets:
+            panel.pack(fill="x")
+        self.show_activity(message)
         self.update_buttons()
 
         def worker():
@@ -1032,6 +1058,37 @@ class PlayerWindow:
     def report_cache(self, message):
         self.results.put(("cache", message, None))
 
+    def report_activity(self, message, done=None, total=None):
+        self.results.put(("activity", message, (done, total)))
+
+    def update_activity_detail(self):
+        elapsed = int(monotonic() - self.activity_started)
+        hours, seconds = divmod(elapsed, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        clock = f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
+        text = f"{self.activity_bytes}  ·  Elapsed {clock}" if self.activity_bytes else f"Elapsed {clock}"
+        if text != self.activity_detail.get():
+            self.activity_detail.set(text)
+
+    def show_activity(self, message, done=None, total=None):
+        self.activity_phase.set(message)
+        measured = done is not None and bool(total)
+        percent = min(100, int(done * 100 / total)) if measured else 0
+        self.activity_bytes = ""
+        if measured:
+            scale, unit = (2**30, "GiB") if total >= 2**30 else (2**20, "MiB")
+            self.activity_bytes = f"{done / scale:,.2f} / {total / scale:,.2f} {unit} ({percent}%)"
+        mode = "determinate" if measured else "indeterminate"
+        for _, bar in self.activity_widgets:
+            if str(bar.cget("mode")) != mode:
+                bar.stop()
+                bar.configure(mode=mode, value=0)
+                if not measured:
+                    bar.start(16)
+            if measured:
+                bar.configure(value=percent)
+        self.update_activity_detail()
+
     def report_lighting(self, message):
         self.results.put(("lighting", message, None))
 
@@ -1047,8 +1104,13 @@ class PlayerWindow:
             try:
                 kind, value, extra = self.results.get_nowait()
             except queue.Empty:
+                if not self.playing:
+                    self.update_activity_detail()
                 self.root.after(80, self.finish)
                 return
+            if kind == "activity":
+                self.show_activity(value, *extra)
+                continue
             if kind == "cache":
                 self.cache_notice = value
                 self.show_launch_progress()
@@ -1060,10 +1122,11 @@ class PlayerWindow:
                 self.lighting.show_game(self.game, self.lighting_notice)
                 continue
             if kind == "progress":
-                self.summary.configure(text=" ".join(filter(None, (value, self.lighting_notice)))
-                                       if self.launching else value)
+                self.show_activity(value)
                 if self.launching and value in LAUNCH_STAGES:
                     self.last_stage = value
+                    if value in ("Connecting controller", "Opening VPX"):
+                        self.cache_notice = ""
                     self.show_launch_progress()
                 if extra:
                     self.playing = True
@@ -1071,7 +1134,11 @@ class PlayerWindow:
                     self.root.withdraw()
                 continue
             self.busy = False
-            self.progress.stop()
+            for panel, bar in self.activity_widgets:
+                bar.stop()
+                bar.configure(mode="determinate", value=0)
+                panel.pack_forget()
+            self.summary.pack(fill="x")
             if self.playing:
                 self.playing = False
                 self.root.deiconify()
@@ -1131,8 +1198,7 @@ class PlayerWindow:
     def run_setup_steps(self, checks):
         while (step := self.next_step(checks)):
             key, action = step
-            self.report(f"Setting up {ROWS[key]}… Windows may ask for administrator permission.", False)
-            checks = self.setup.repair(key, action)
+            checks = self.setup.repair(key, action, progress=self.report_activity)
             if checks[key].state == "Setup failed":
                 break
         return checks
@@ -1219,7 +1285,8 @@ class PlayerWindow:
 
     def load_image(self, path, expected=None):
         def work():
-            image, note = self.player.prepare_image(path, expected)
+            image, note = self.player.prepare_image(path, expected, progress=self.report_activity)
+            self.report_activity("Saving the game to the library…")
             if expected and expected in self.saved:
                 image = self.player.relink_image(expected, image)
             elif not any(game.title == image.title and game.image == image.image for game in self.saved):
@@ -1233,7 +1300,7 @@ class PlayerWindow:
             self.reload_library(saved or image)
             self.summary.configure(text=f"{image.name} · image verified.")
 
-        message = "Extracting and inspecting the SD-card image…" if Path(path).suffix.casefold() == ".zip" else (
+        message = "Opening the ZIP archive…" if Path(path).suffix.casefold() == ".zip" else (
             "Inspecting the SD-card image…")
         self.start(work, done, message)
 
@@ -1297,7 +1364,7 @@ class PlayerWindow:
             self.reload_library(self.game)
 
         self.start(lambda: self.player.play(game, self.report, lighting_update=self.report_lighting,
-                                            cache_update=self.report_cache),
+                                            cache_update=self.report_cache, activity=self.report_activity),
                    done, f"Starting {game.name}…", failed)
 
     def recover_session(self):

@@ -102,7 +102,7 @@ def download(payload: Payload, dest: Optional[str] = None,
              log: Optional[Callable[[str], None]] = None,
              progress: Optional[Callable[[int, int], None]] = None,
              opener: Optional[Callable] = None,
-             repo: str = GITHUB_REPO) -> str:
+             repo: str = GITHUB_REPO, *, verifying: Optional[Callable[[], None]] = None) -> str:
     """Fetch one payload into the host cache and return its path.
 
     Writes ``<dest>.part`` and renames only after :func:`verify` passes, so a
@@ -130,6 +130,8 @@ def download(payload: Payload, dest: Optional[str] = None,
                 done += len(block)
                 if progress:
                     progress(done, payload.size)
+        if verifying:
+            verifying()
     except Exception as exc:                                   # noqa: BLE001
         _unlink(part)
         raise RuntimeError(
