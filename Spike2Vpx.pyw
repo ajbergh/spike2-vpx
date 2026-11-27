@@ -27,6 +27,11 @@ LCD_FULLSCREEN_MODE = "Borderless fullscreen"
 LCD_WINDOWED_MODE = "Windowed"
 
 
+def window_title():
+    version = support.app_version()
+    return "SPIKE 2 VPX" if version == "Source checkout" else f"SPIKE 2 VPX {version.removesuffix('.0')}"
+
+
 def configure_style(root):
     root.configure(background=BACKGROUND)
     style = ttk.Style(root)
@@ -138,7 +143,7 @@ class PlayerWindow:
         self.activity_started = 0.0
         self.activity_bytes = ""
         self.activity_widgets = []
-        root.title("SPIKE 2 VPX")
+        root.title(window_title())
         root.geometry("960x730")
         root.minsize(840, 660)
         root.protocol("WM_DELETE_WINDOW", self.close)

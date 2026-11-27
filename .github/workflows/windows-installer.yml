@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Installer version (for example 0.1.0)
+        description: Installer version (MAJOR.MINOR.PATCH)
+        default: '0.3.0'
         required: true
         type: string
   push:
@@ -83,7 +84,7 @@ jobs:
           }
           Push-Location -LiteralPath $target
           try {
-              & '.\python\python.exe' -c 'import runpy, sys, tkinter, win32file; runpy.run_path(sys.argv[1]); from spike2_vpx.support import app_version; tkinter.Tcl(); assert app_version() == sys.argv[2], app_version()' 'Spike2Vpx.pyw' $env:APP_VERSION
+              & '.\python\python.exe' -c 'import runpy, sys, tkinter, win32file; app = runpy.run_path(sys.argv[1]); from spike2_vpx.support import app_version; tkinter.Tcl(); assert app_version() == sys.argv[2], app_version(); title = app["window_title"](); assert title == "SPIKE 2 VPX " + sys.argv[2].removesuffix(".0"), title' 'Spike2Vpx.pyw' $env:APP_VERSION
               if ($LASTEXITCODE -ne 0) { throw 'The installed application failed its smoke test.' }
           } finally {
               Pop-Location

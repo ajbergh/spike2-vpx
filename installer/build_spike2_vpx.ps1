@@ -2,7 +2,7 @@
 param(
     [string]$Python = "python.exe",
     [string]$InnoSetupPath = "",
-    [string]$AppVersion = "0.1.0"
+    [string]$AppVersion = "0.3.0"
 )
 
 $ErrorActionPreference = "Stop"
