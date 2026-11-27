@@ -48,6 +48,7 @@ def configure_style(root):
                     lightcolor=ACCENT, darkcolor=ACCENT, thickness=8)
     style.configure("TButton", background=SURFACE, padding=(10, 5))
     style.map("TButton", background=[("active", "#35475d")], foreground=[("disabled", "#8595a8")])
+    style.configure("Fix.TButton", padding=(6, 2), foreground=ACCENT)
     style.configure("Primary.TButton", background=ACCENT, foreground=BACKGROUND, padding=(18, 9),
                     font=("Segoe UI", 12, "bold"))
     style.map("Primary.TButton", background=[("disabled", SURFACE), ("active", "#acf1e1")],
@@ -252,7 +253,7 @@ class PlayerWindow:
         self.backglass_button = ttk.Button(pairing, text="Attach backglass…", command=self.attach_backglass)
         self.backglass_button.pack(side="left", padx=(8, 0))
 
-        actions = ttk.Frame(detail)
+        self.game_actions = actions = ttk.Frame(detail)
         actions.pack(fill="x", pady=(4, 8), before=image)
         self.play_button = ttk.Button(actions, style="Primary.TButton", command=self.next_game_step)
         self.play_button.pack(side="left")
@@ -449,8 +450,12 @@ class PlayerWindow:
             status = ttk.Label(checklist, text="Checking…")
             status.grid(row=row, column=1, sticky="e", pady=(6, 0))
             detail = ttk.Label(checklist, wraplength=680, justify="left")
-            detail.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(2, 4))
-            self.labels[key] = status, detail
+            detail.grid(row=row + 1, column=0, sticky="w", pady=(2, 4))
+            fix = ttk.Button(checklist, text="Click to fix", style="Fix.TButton",
+                             command=lambda item=key: self.fix_setup_item(item))
+            fix.grid(row=row + 1, column=1, sticky="ne", padx=(12, 0), pady=(2, 4))
+            fix.grid_remove()
+            self.labels[key] = status, detail, fix
             if index < len(ROWS) - 1:
                 ttk.Separator(checklist).grid(row=row + 2, column=0, columnspan=2, sticky="ew")
         checklist.bind("<Configure>", self.wrap_details)
@@ -781,8 +786,10 @@ class PlayerWindow:
         ttk.Button(body, text="Close", command=dialog.destroy).pack(side="right", padx=8)
 
     def wrap_details(self, event):
-        for _, detail in self.labels.values():
-            detail.configure(wraplength=max(240, event.width - 28))
+        status_width = max(max(status.winfo_reqwidth(), fix.winfo_reqwidth() + 12)
+                           for status, _, fix in self.labels.values())
+        for _, detail, _ in self.labels.values():
+            detail.configure(wraplength=max(240, event.width - status_width - 28))
 
     def open_logs(self):
         try:
@@ -821,14 +828,22 @@ class PlayerWindow:
         )
         for button, enabled in states:
             button.state(["!disabled"] if enabled and not self.busy else ["disabled"])
+        restarting = any(check.state == "Restart required" for check in self.checks.values())
+        for key, (_, _, fix) in self.labels.items():
+            enabled = not self.busy and (key == "vpx" or not restarting)
+            fix.state(["!disabled"] if enabled else ["disabled"])
         label, self.game_action, hint = self.game_step()
-        self.play_button.configure(text=label)
-        self.cabinet_play.configure(text=label)
+        missing_file = label in ("Locate image…", "Locate table…")
+        self.play_button.configure(text="Click to fix" if missing_file else label)
+        self.cabinet_play.configure(text="Click to fix" if missing_file else label)
+        placement = "after" if missing_file else "before"
+        self.game_actions.pack_configure(**{placement: self.play_hint})
+        self.cabinet_play.pack_configure(**{placement: self.cabinet_status})
         if label == "Import image…":
             self.image_button.pack_forget()
         else:
             self.image_button.pack(side="left", before=self.folder_button, padx=(0, 8))
-        if label == "Choose table…":
+        if label in ("Choose table…", "Locate table…"):
             self.table_button.pack_forget()
         else:
             self.table_button.pack(side="left", before=self.backglass_button)
@@ -1167,9 +1182,13 @@ class PlayerWindow:
     def show_checks(self, checks):
         self.checks = checks
         for key, check in checks.items():
-            status, detail = self.labels[key]
+            status, detail, fix = self.labels[key]
             status.configure(text=check.state)
             detail.configure(text=check.detail)
+            if check.state == "Missing" and (check.action or key == "vpx"):
+                fix.grid()
+            else:
+                fix.grid_remove()
         states = {check.state for check in checks.values()}
         if "Restart required" in states:
             summary = "Restart Windows, then reopen SPIKE 2 VPX to resume setup."
@@ -1207,6 +1226,14 @@ class PlayerWindow:
     def repair(self):
         self.start(lambda: self.run_setup_steps(self.setup.checks()), self.show_checks,
                    "Setting up this PC… Windows may ask for administrator permission.")
+
+    def fix_setup_item(self, key):
+        check = self.checks[key]
+        if key == "vpx":
+            self.choose_vpx()
+        elif check.action:
+            self.start(lambda: self.setup.repair(key, check.action, progress=self.report_activity),
+                       self.show_checks, f"Setting up {ROWS[key]}…")
 
     def choose_vpx(self):
         exe = filedialog.askopenfilename(parent=self.root, title="Choose Visual Pinball X",
