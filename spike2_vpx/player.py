@@ -400,7 +400,7 @@ class Player:
             return frozenset(roles)
         return None
 
-    def play(self, game, progress, timeout=180, *, lighting_update=None):
+    def play(self, game, progress, timeout=180, *, lighting_update=None, cache_update=None):
         exe = self.setup.vpx_executable()
         if exe is None or self.setup.check_vpx().state != "Ready":
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
@@ -424,7 +424,7 @@ class Player:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
         launch = padlaunch.Launch(title, game.image, dist=DISTRO, minutes=0, prepared=True,
-                                  audio_control=str(self.audio_path))
+                                  audio_control=str(self.audio_path), cache_update=cache_update)
         started = False
         lighting_record = self.lighting_record(game)
 

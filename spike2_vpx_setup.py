@@ -11,7 +11,7 @@ import subprocess
 import sys
 from tempfile import NamedTemporaryFile
 
-from spike2_vpx import payloads, runtime, wsl_up
+from spike2_vpx import payloads, runtime, storage, wsl_up
 
 APP = Path(__file__).resolve().parent
 RIG = APP / "tools" / "spike2_emu"
@@ -98,7 +98,6 @@ class Setup:
         self.platform_log = self.log_path.with_name("wsl-platform.log")
         self.controller_log = self.log_path.with_name("controller-registration.log")
         self.settings_path = self.data / "setup.json"
-        self.runtime_dir = self.data / "runtime"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log = logging.Logger("spike2-vpx-setup")
         handler = logging.FileHandler(self.log_path, encoding="utf-8")
@@ -109,6 +108,18 @@ class Setup:
             self.settings = settings if isinstance(settings, dict) else {}
         except (OSError, ValueError):
             self.settings = {}
+
+    @property
+    def runtime_dir(self):
+        return storage.installed_folder(APP, "runtime") or self.data / "runtime"
+
+    def owns_runtime(self, base):
+        base = base.resolve()
+        saved = self.settings.get("runtime_dir")
+        if isinstance(saved, str) and saved:
+            return base == Path(saved).resolve()
+        # Older installers used this location and did not record it in setup.json.
+        return base in (self.runtime_dir.resolve(), (self.data / "runtime").resolve())
 
     def save(self):
         with NamedTemporaryFile(mode="w", dir=self.data, encoding="utf-8",
@@ -176,7 +187,7 @@ class Setup:
             return Check("Missing", "Set up downloads and imports this app’s SPIKE 2 Linux runtime.",
                          "install_runtime")
         base, version = registered
-        if base.resolve() != self.runtime_dir.resolve():
+        if not self.owns_runtime(base):
             return Check("Needs attention", f"Another WSL distribution uses {DISTRO}. "
                          "Resolve the name conflict, then check again.")
         if version != 2:
@@ -218,7 +229,7 @@ class Setup:
 
     def repair_arm(self):
         registered = distro_registration()
-        if registered is None or registered[0].resolve() != self.runtime_dir.resolve() or registered[1] != 2:
+        if registered is None or not self.owns_runtime(registered[0]) or registered[1] != 2:
             raise RuntimeError("ARM repair requires this app's SPIKE 2 WSL 2 distribution.")
         rig = self.wsl("wslpath", "-a", "-u", str(RIG))
         if rig.returncode:
@@ -229,7 +240,7 @@ class Setup:
 
     def convert_runtime(self):
         registered = distro_registration()
-        if registered is None or registered[0].resolve() != self.runtime_dir.resolve() or registered[1] != 1:
+        if registered is None or not self.owns_runtime(registered[0]) or registered[1] != 1:
             raise RuntimeError("Conversion requires this app's SPIKE 2 WSL 1 distribution.")
         out = run(["wsl.exe", "--set-version", DISTRO, "2"], timeout=1800)
         if out.returncode:
@@ -338,9 +349,10 @@ class Setup:
     def install_runtime(self):
         if distro_registration() is not None:
             raise RuntimeError(f"{DISTRO} already exists. Check its status before attempting another import.")
-        if self.runtime_dir.exists() and any(self.runtime_dir.iterdir()):
-            raise RuntimeError(f"A previous import left files in {self.runtime_dir}. "
-                               "Move that folder to a backup location before retrying.")
+        target = self.runtime_dir.resolve()
+        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+            raise RuntimeError(f"The runtime needs an empty folder. {target} already contains data. "
+                               "Use an empty folder or run the installer again to choose another location.")
         image = runtime.IMAGE
         stamp = image.sha256[:12]
         cache = self.data / "downloads" / f"{stamp}-{image.filename}"
@@ -349,7 +361,9 @@ class Setup:
             runtime._need_room(str(cache.parent), image.size + runtime.DOWNLOAD_SLACK,
                                "download the SPIKE 2 runtime")
             payloads.download(image, str(cache), log=self.log.info)
-        runtime.import_image(DISTRO, str(self.runtime_dir), str(cache))
+        runtime.import_image(DISTRO, str(target), str(cache))
+        self.settings["runtime_dir"] = str(target)
+        self.save()
 
     def repair(self, key, action):
         steps = {"install_wsl": lambda: self.install_platform("Install"),

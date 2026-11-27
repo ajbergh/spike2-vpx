@@ -123,6 +123,26 @@ class StandaloneSetupTest(unittest.TestCase):
         self.assertEqual(Path(target), self.app.runtime_dir)
         self.assertEqual(Path(archive).parent, self.app.data / "downloads")
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows installer paths")
+    def test_installer_runtime_folder_is_used_for_import_and_remembered(self):
+        install = self.app.data / "App"
+        install.mkdir()
+        selected = self.app.data / "Another drive folder"
+        config = install / "storage.ini"
+        config.write_text(f"[Storage]\nruntime = {selected}\n", encoding="utf-8-sig")
+        with patch.object(setup, "APP", install), \
+                patch.object(setup, "distro_registration", return_value=None), \
+                patch.object(setup.payloads, "verify", return_value=(True, "")), \
+                patch.object(setup.runtime, "import_image") as import_image:
+            self.assertTrue(self.app.owns_runtime(self.app.data / "runtime"))
+            self.app.install_runtime()
+            self.assertEqual(Path(import_image.call_args.args[1]), selected.resolve())
+            config.write_text("[Storage]\nruntime =\n", encoding="utf-8")
+            reopened = setup.Setup(self.app.data)
+            self.addCleanup(reopened.log.handlers[0].close)
+            self.assertTrue(reopened.owns_runtime(selected))
+            self.assertFalse(reopened.owns_runtime(self.app.data / "runtime"))
+
     def test_vpx_does_not_read_the_inherited_kit_and_saves_browse_selection(self):
         with patch.object(setup.vpxsetup, "find_vpx", return_value="") as find:
             self.assertEqual(self.app.check_vpx().state, "Missing")

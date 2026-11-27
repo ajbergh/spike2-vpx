@@ -123,6 +123,7 @@ class PlayerWindow:
         self.launch_error_game = None
         self.launching = False
         self.last_stage = ""
+        self.cache_notice = ""
         self.lighting_notice = ""
         self.details_open = False
         root.title("SPIKE 2 VPX")
@@ -671,7 +672,7 @@ class PlayerWindow:
         ttk.Spinbox(page, textvariable=self.volume, from_=0, to=100, width=6).grid(
             row=1, column=1, sticky="w", padx=16)
         ttk.Label(page, text="SD-card cache", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=10)
-        ttk.Checkbutton(page, variable=self.cache, text="Cache images in the WSL runtime").grid(
+        ttk.Checkbutton(page, variable=self.cache, text="Cache images on first load").grid(
             row=2, column=1, sticky="w", padx=16)
         self.save_options = ttk.Button(page, text="Save settings", command=self.save_settings)
         self.save_options.grid(row=3, column=0, sticky="w", pady=(12, 20))
@@ -1028,8 +1029,18 @@ class PlayerWindow:
     def report(self, message, playing):
         self.results.put(("progress", message, playing))
 
+    def report_cache(self, message):
+        self.results.put(("cache", message, None))
+
     def report_lighting(self, message):
         self.results.put(("lighting", message, None))
+
+    def show_launch_progress(self):
+        index = LAUNCH_STAGES.index(self.last_stage)
+        stages = "\n".join(
+            ("✓  " if step < index else "›  " if step == index else "     ") + stage
+            for step, stage in enumerate(LAUNCH_STAGES))
+        self.launch_text.set("\n".join(filter(None, (self.cache_notice, stages, self.lighting_notice))))
 
     def finish(self):
         while True:
@@ -1038,6 +1049,10 @@ class PlayerWindow:
             except queue.Empty:
                 self.root.after(80, self.finish)
                 return
+            if kind == "cache":
+                self.cache_notice = value
+                self.show_launch_progress()
+                continue
             if kind == "lighting":
                 if value:
                     self.lighting_notice = value
@@ -1049,11 +1064,7 @@ class PlayerWindow:
                                        if self.launching else value)
                 if self.launching and value in LAUNCH_STAGES:
                     self.last_stage = value
-                    index = LAUNCH_STAGES.index(value)
-                    stages = "\n".join(
-                        ("✓  " if step < index else "›  " if step == index else "     ") + stage
-                        for step, stage in enumerate(LAUNCH_STAGES))
-                    self.launch_text.set("\n".join(filter(None, (stages, self.lighting_notice))))
+                    self.show_launch_progress()
                 if extra:
                     self.playing = True
                     self.launch_text.set("Playing in Visual Pinball X")
@@ -1259,6 +1270,7 @@ class PlayerWindow:
         self.launching = True
         self.launch_error_game = None
         self.last_stage = "Checking files"
+        self.cache_notice = ""
         self.lighting_notice = ""
         self.lighting.show_game(game, "")
         self.launch_text.set("›  Checking files")
@@ -1284,7 +1296,8 @@ class PlayerWindow:
             self.launch_text.set(f"Stopped at {self.last_stage.lower()}\n{text}")
             self.reload_library(self.game)
 
-        self.start(lambda: self.player.play(game, self.report, lighting_update=self.report_lighting),
+        self.start(lambda: self.player.play(game, self.report, lighting_update=self.report_lighting,
+                                            cache_update=self.report_cache),
                    done, f"Starting {game.name}…", failed)
 
     def recover_session(self):

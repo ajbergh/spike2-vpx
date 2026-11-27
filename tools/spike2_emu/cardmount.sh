@@ -353,6 +353,7 @@ cache_used_kb() {
 # are reused before it grows - and if they were handed back to Windows instead, df of the drive shows them), is the
 # room a copy really has. PAD_HOST_KEEP_FREE_GB (4) stays free for Windows. Not on the store, whose disk is its own.
 host_free_kb() {
+    [ -z "${PAD_CARD_CACHE_DRIVE:-}" ] || return 1  # df of the cache already measures this Windows drive
     [ -n "${PAD_HOST_DRIVE:-}" ] && [ "$CACHE" != /mnt/wsl/cards/cardcache ] || return 1
     df -k --output=avail "$PAD_HOST_DRIVE" 2>/dev/null | tail -1 | tr -d " " | grep -E '^[0-9]+$'
 }
@@ -367,6 +368,12 @@ host_free_kb() {
 # with the same number the copier's room check uses.
 cache_need_kb() {   # <img>
     local size alloc used key memo
+    if [ -n "${PAD_CARD_CACHE_DRIVE:-}" ]; then
+        # Windows filesystems may allocate the holes in the copy.
+        size=$(stat -c %s "$1" 2>/dev/null || echo 0)
+        echo $(( (size + 1023) / 1024 ))
+        return
+    fi
     if [ "${PAD_CARD_COPY_USED:-1}" != 0 ] && command -v python3 >/dev/null 2>&1; then
         # the plan reads the image's bitmaps through 9p, about a second a card: remembered beside the cache as
         # <label>.need under the image's own identity (size+mtime, as the copy's stamp), so the Visual Pinball
@@ -556,6 +563,8 @@ cache_check() {   # <img>
     DRY_GONE=""; ROOM_WHY=""; ROOM_EVICT_N=0; ROOM_EVICT_KB=0; ROOM_FREE_KB=""
     if [ "${PAD_CARD_CACHE:-1}" = 0 ]; then
         state=off
+    elif ! cache_folder_ready; then
+        state=unavailable; need=0
     elif on_cache_disk "$img" || library_copy "$img" >/dev/null; then
         state=cached; need=0           # PAD-966: booted where it lies, or from its library copy - nothing to copy
     elif cache_valid "$img" "$copy" "$stamp"; then
@@ -573,12 +582,13 @@ cache_check() {   # <img>
     fi
     host=""
     [ "$ROOM_WHY" = host ] && host=${PAD_HOST_DRIVE:-}
-    [ -n "$ROOM_FREE_KB" ] || ROOM_FREE_KB=$(cache_disk_avail_kb)
+    if [ -z "$ROOM_FREE_KB" ] && [ "$state" != unavailable ]; then ROOM_FREE_KB=$(cache_disk_avail_kb); fi
     printf 'check\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$state" "${need:-$(cache_need_kb "$img")}" "$ROOM_FREE_KB" \
         $(( CACHE_KEEP_GB * 1048576 )) "$ROOM_EVICT_N" "$ROOM_EVICT_KB" "$(cache_kind)" "$host" "$label" "$img"
 }
 cache_kind() {
-    if [ "$CACHE" = /mnt/wsl/cards/cardcache ]; then echo store
+    if [ -n "${PAD_CARD_CACHE_DRIVE:-}" ]; then echo windows
+    elif [ "$CACHE" = /mnt/wsl/cards/cardcache ]; then echo store
     elif [ "$CACHE" = "${CACHE_DISK:-/mnt/wsl/padcache}/cardcache" ]; then echo disk
     else echo distro; fi
 }
@@ -699,6 +709,12 @@ cache_disk_df() {   # <df --output fields>
 }
 cache_disk_avail_kb() { cache_disk_df avail | tr -d " "; }
 
+cache_folder_ready() {
+    [ -z "${PAD_CARD_CACHE_DRIVE:-}" ] && return 0
+    # A missing drive can leave an empty mount point on the WSL disk.
+    mountpoint -q -- "$PAD_CARD_CACHE_DRIVE" && mkdir -p -- "$CACHE" 2>/dev/null && [ -w "$CACHE" ]
+}
+
 # ITEM 74: wait for the detached copier, narrating progress so the minutes are
 # visible - one newline-terminated line every 2 s, because the GUI's drain
 # thread and the run log both read LINES (dd's own \r progress never surfaces
@@ -776,6 +792,10 @@ cache_pick() {
     local img="$1" label="$2" mode="${3:-sync}"
     local copy="$CACHE/$label.raw" stamp="$CACHE/$label.src"
     if [ "${PAD_CARD_CACHE:-1}" = 0 ]; then echo "$img"; return; fi
+    if ! cache_folder_ready; then
+        echo "[card] Windows cache folder is unavailable: $CACHE. Booting from the source image." >&2
+        echo "$img"; return
+    fi
     if on_cache_disk "$img"; then
         echo "[card] $(basename "$img") lives on the card store already - booting it where it lies" >&2
         echo "$img"; return
@@ -817,8 +837,7 @@ cache_pick() {
         if ! cache_make_room "$img" "$copy"; then
             echo "$img"; return
         fi
-        echo "[card] caching $(basename "$img") to the WSL disk in the background" >&2
-        echo "[card]   (first run only; next boot of this card is native speed)" >&2
+        echo "[card] caching $(basename "$img") in $CACHE" >&2
         # setsid, for the same reason fuse2fs gets it below: this shell is
         # frequently a `wsl -e bash -c` child, and when that session ends its
         # process group goes with it - the first copier died at 0 bytes this
@@ -1288,11 +1307,13 @@ fi
 # --cache-check [<img2> ...]: what this card (and any more named after it) will cost the disk, one `check` line
 # each after a `cache` line, nothing copied or evicted (PAD-964; cache_check above). The Visual Pinball launch asks
 # it before watch.sh and the tab asks it for every card in the folder, in one call.
-#   cache <TAB> dir <TAB> store|distro <TAB> avail_kb <TAB> size_kb <TAB> limit_gb <TAB> used_kb
+#   cache <TAB> dir <TAB> kind <TAB> avail_kb <TAB> size_kb <TAB> limit_gb <TAB> used_kb
 if [ "$MODE" = "--cache-check" ]; then
     CACHE_READERS=$(cache_readers)      # one pass over /proc for every card asked (as --cache-list takes it)
-    cache_disk_df avail,size | awk -v d="$CACHE" -v k="$(cache_kind)" -v l="$(cache_limit_gb)" -v u="$(cache_used_kb)" \
-        '{printf "cache\t%s\t%s\t%s\t%s\t%s\t%s\n", d, k, $1, $2, l, u}'
+    if cache_folder_ready; then
+        cache_disk_df avail,size | awk -v d="$CACHE" -v k="$(cache_kind)" -v l="$(cache_limit_gb)" -v u="$(cache_used_kb)" \
+            '{printf "cache\t%s\t%s\t%s\t%s\t%s\t%s\n", d, k, $1, $2, l, u}'
+    fi
     cache_check "$IMG"
     shift 2
     for img in "$@"; do

@@ -158,6 +158,8 @@ def space_words(chk):
     elif state == "full":
         words = ("No room in %s for the card image (%s needed with %s kept free, %s free): the game reads it "
                  "where it lies, a slow start" % (where, gb(need), gb(chk.get("keep_kb") or 0), gb(free)))
+    elif state == "unavailable":
+        words = "The selected Windows cache folder is unavailable. The game reads the source image directly"
     else:
         words = "What the card image costs the disk could not be told"
     return state, words
@@ -423,11 +425,12 @@ class Launch:
     """One run started for a table: a slot, a watch.sh, and the stop for it."""
 
     def __init__(self, title, card, dist=None, minutes=240, *, game_dir=None, prepared=False,
-                 audio_control=None):
+                 audio_control=None, cache_update=None):
         self.title = game_for(title)
         self.card = card
         self.game_dir = game_dir
         self.audio_control = audio_control
+        self.cache_update = cache_update
         self.windows_lcd = None
         self.lighting_topper = False
         self.lighting_scan = ""
@@ -466,15 +469,22 @@ class Launch:
         return self.rig_cmd("riglock.sh")
 
     def cache_env(self):
-        """What the card cache is told for this run: the Windows drive behind
-        WSL (host_drive) and, with caching off in the kit, PAD_CARD_CACHE=0."""
-        env = []
-        drive = host_drive(self.distro)
-        if drive:
-            env.append("PAD_HOST_DRIVE=%s" % drive)
+        """Use the same cache and disk-space rules for preflight and launch."""
         if not cache_on():
-            env.append("PAD_CARD_CACHE=0")
-        return env
+            return ["PAD_CARD_CACHE=0"]
+        if sys.platform == "win32" and (self.distro or "").casefold() == RUNTIME_DISTRO.casefold():
+            app = Path(RIG).parents[1]
+            if str(app) not in sys.path:
+                sys.path.append(str(app))
+            from spike2_vpx.storage import installed_folder
+
+            folder = installed_folder(app, "cache")
+            if folder is not None:
+                cache = padpath.to_wsl(str(folder / "SPIKE2-VPX-cardcache"), self.distro)
+                drive = padpath.to_wsl(folder.anchor, self.distro).rstrip("/")
+                return ["PAD_CARD_CACHE_DIR=" + cache, "PAD_CARD_CACHE_DRIVE=" + drive]
+        drive = host_drive(self.distro)
+        return ["PAD_HOST_DRIVE=" + drive] if drive else []
 
     def cache_check(self, cards=None):
         """What the card (or each of `cards`) costs the disk before the run:
@@ -627,6 +637,8 @@ class Launch:
             state, words = space_words(self.check)
             self.note("[card-check] %s: %s" % (state, words))
             log("card check for %s: %s: %s" % (self.title, state, words))
+            if self.cache_update and state in ("room", "evict", "copying"):
+                self.cache_update("Caching the SD-card image. This launch may take longer than usual.")
         self._start_watch()
         log("started %s on slot %d from %s (distro %s, log %s)"
             % (self.title, self.slot, self.card, self.distro or "default", self.logfile))

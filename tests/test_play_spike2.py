@@ -1,6 +1,6 @@
 """Prepared VPX launch ordering and ownership, without starting WSL or VPX."""
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -34,6 +34,21 @@ class PreparedLaunchTest(unittest.TestCase):
             (folder / "godzilla_le-1_14_0.sdcard.raw").touch()
             with self.assertRaisesRegex(ValueError, "Multiple .raw images.*-Card"):
                 play.card_in_folder(folder, "godzilla_le")
+
+    def test_custom_cache_uses_the_selected_drive_instead_of_the_runtime_drive(self):
+        launch = SimpleNamespace(distro=play.padlaunch.RUNTIME_DISTRO)
+        with patch.object(play.padlaunch, "cache_on", return_value=True), \
+                patch.object(play.padlaunch.sys, "platform", "win32"), \
+                patch("spike2_vpx.storage.installed_folder", return_value=PureWindowsPath(r"D:\Game Cache")), \
+                patch.object(play.padlaunch.padpath, "to_wsl",
+                             side_effect=["/mnt/d/Game Cache/SPIKE2-VPX-cardcache", "/mnt/d/"]) as convert, \
+                patch.object(play.padlaunch, "host_drive") as host_drive:
+            env = play.padlaunch.Launch.cache_env(launch)
+        self.assertEqual(env, ["PAD_CARD_CACHE_DIR=/mnt/d/Game Cache/SPIKE2-VPX-cardcache",
+                               "PAD_CARD_CACHE_DRIVE=/mnt/d"])
+        self.assertEqual([args.args for args in convert.call_args_list],
+                         [(r"D:\Game Cache\SPIKE2-VPX-cardcache", launch.distro), ("D:\\", launch.distro)])
+        host_drive.assert_not_called()
 
     def test_raw_image_detection_accepts_a_single_custom_filename(self):
         with TemporaryDirectory() as folder:
@@ -112,6 +127,26 @@ class PreparedLaunchTest(unittest.TestCase):
         self.assertEqual(prepare.call_args.args[0][-2:],
                          ["/home/pad/spike2root", "/mnt/c/Game Card.raw"])
         launch._start_watch.assert_called_once_with()
+
+    def test_pending_cache_copy_reports_a_slow_start_before_starting_watch(self):
+        mod = play.padlaunch
+        with patch.object(mod.padpath, "to_wsl", return_value="/rig"), \
+                patch.object(mod, "no_linux", return_value=""), \
+                patch.object(mod.Launch, "base_rig", return_value=""), \
+                patch.object(mod, "log"):
+            for state in ("room", "evict", "copying", "cached", "off", "full", "unavailable", None):
+                with self.subTest(state=state):
+                    events = Mock()
+                    launch = mod.Launch("godzilla_le", "/card.raw", dist="PAD-Runtime",
+                                        cache_update=events.notice)
+                    launch.slot = 2
+                    launch.cache_check = Mock(return_value={"state": state} if state else None)
+                    launch._start_watch = events.watch
+                    launch.start()
+                    self.assertEqual([call[0] for call in events.mock_calls],
+                                     ["notice", "watch"] if state in ("room", "evict", "copying") else ["watch"])
+                    if events.notice.called:
+                        self.assertIn("longer than usual", events.notice.call_args.args[0])
 
     def test_arm_repair_failure_stops_before_card_extraction(self):
         mod = play.padlaunch

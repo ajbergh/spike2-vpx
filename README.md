@@ -75,6 +75,16 @@ and the controller. **Get VPX** opens the VPX download page. After installing
 VPX, use **Choose VPX** if the app needs help locating `VPinballX64.exe`.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
+The Windows installer's **SPIKE 2 storage** page lets you choose separate
+drive letters and folders for a new WSL emulator runtime and for first-load
+SD-card copies. Use an empty folder for a new runtime. A custom cache goes
+in a `SPIKE2-VPX-cardcache` subfolder on a Windows drive that WSL can access.
+Leave both fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime` and the
+WSL cache. The default WSL cache generally offers faster reads than a
+Windows folder. An already registered app runtime stays in place when you
+rerun the installer. Installer choices affect future cache writes. Runtime
+downloads and ZIP imports use the app's data folder.
+
 Setup verifies that WSL can execute an ARM program inside a chroot. It
 repairs a missing ARM handler in the app's distro, and the launcher checks
 again before preparing a game in case WSL has restarted. This repair keeps
