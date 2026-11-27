@@ -100,9 +100,12 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 
 Browse **Supported Tables** to find the table version for your game and open
 its download page where one is listed. In **Games**, **Get image from Stern**
-opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
-containing one `.raw`. You can select a ZIP on an SMB share using a UNC path or
-mapped drive. With **Cache images on first load** enabled, ZIP import saves one
+opens Stern's download page. Select the `.zip` you downloaded from Stern
+directly in **Import image**. The app extracts the SD-card image for you, so
+you can skip unzipping the download. The ZIP must contain one `.raw` image.
+**Import image** also accepts an already extracted `.raw` file. You can select
+a ZIP on an SMB share using a UNC path or mapped drive. With **Cache images on
+first load** enabled, ZIP import saves one
 sparse image in `SPIKE2-VPX-cardcache\imports` under the cache folder selected
 in the installer. When the cache folder is blank, the app stores the image
 inside the local WSL runtime. The game starts from that image even when the
