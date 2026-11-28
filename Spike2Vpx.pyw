@@ -25,6 +25,7 @@ import play_spike2
 LAUNCH_STAGES = ("Checking files", "Starting Stern", "Connecting controller", "Opening VPX")
 BACKGROUND, SURFACE, TEXT, MUTED, ACCENT = "#11151c", "#1b2330", "#edf2f7", "#acbbcd", "#79ddc5"
 LCD_FULLSCREEN_MODE = "Borderless fullscreen"
+LCD_REGION_MODE = "Borderless region"
 LCD_WINDOWED_MODE = "Windowed"
 RUNTIME_CONFIRMATIONS = (REINSTALL_RUNTIME, "convert_runtime")
 
@@ -496,7 +497,7 @@ class PlayerWindow:
                 ttk.Label(page, text="Stern LCD mode").grid(row=row, column=0, sticky="w", pady=7)
                 self.lcd_mode = tk.StringVar()
                 mode = ttk.Combobox(page, textvariable=self.lcd_mode, state="readonly", width=42,
-                                    values=(LCD_FULLSCREEN_MODE, LCD_WINDOWED_MODE))
+                                    values=(LCD_FULLSCREEN_MODE, LCD_REGION_MODE, LCD_WINDOWED_MODE))
                 mode.grid(row=row, column=1, sticky="w", padx=16)
                 mode.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
                 row += 1
@@ -507,26 +508,37 @@ class PlayerWindow:
             box.grid(row=row, column=1, sticky="w", padx=16)
             box.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
             self.screen_boxes[role] = box
+        self.lcd_region = ttk.Frame(page)
+        self.lcd_region.grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.lcd_pixels = {}
+        for column, (key, label) in enumerate(cabinet.LCD_RECT_FIELDS.items()):
+            ttk.Label(self.lcd_region, text=label).grid(row=0, column=column, sticky="w")
+            value = self.lcd_pixels[key] = tk.StringVar()
+            entry = ttk.Entry(self.lcd_region, textvariable=value, width=9)
+            entry.grid(row=1, column=column, sticky="w", padx=(0, 12), pady=(3, 0))
+            entry.bind("<KeyRelease>", lambda _: self.check_layout())
+        ttk.Label(self.lcd_region, text="Pixels from the selected screen’s top-left corner.",
+                  style="Hint.TLabel").grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
         buttons = ttk.Frame(page)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="w", pady=(16, 8))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=(16, 8))
         for label, action in (("Refresh screens", self.refresh_screens),
                               ("Identify screens", self.identify_screens),
                               ("Single-screen preset", self.single_screen),
                               ("Test layout", self.test_layout)):
             ttk.Button(buttons, text=label, command=action).pack(side="left", padx=(0, 8))
         self.save_cabinet = ttk.Button(page, text="Save display layout", command=self.save_layout)
-        self.save_cabinet.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.save_cabinet.grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.cabinet_hint = ttk.Label(page, style="Hint.TLabel", wraplength=620, justify="left")
-        self.cabinet_hint.grid(row=8, column=0, columnspan=2, sticky="w")
+        self.cabinet_hint.grid(row=9, column=0, columnspan=2, sticky="w")
         ttk.Label(page, text="Use VPX windowed mode when assigning a playfield screen. "
                   "A backglass needs 64-bit B2S Server and a matching .directb2s file.",
                   style="Hint.TLabel", wraplength=620, justify="left").grid(
-            row=9, column=0, columnspan=2, sticky="w", pady=(12, 0))
+            row=10, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Button(page, text="Get B2S Server", command=lambda: webbrowser.open(
             "https://github.com/vpinball/b2s-backglass/releases")).grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
         profile_tools = ttk.Frame(page)
-        profile_tools.grid(row=11, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        profile_tools.grid(row=12, column=0, columnspan=2, sticky="w", pady=(10, 0))
         active = self.setup.settings.get("display_profile")
         self.profile = tk.StringVar(value=active if active in support.PROFILES else "Desktop")
         ttk.Label(profile_tools, text="Display profile").pack(side="left")
@@ -545,11 +557,18 @@ class PlayerWindow:
                   for role, variable in self.screen_vars.items()}
         if self.lcd_mode.get() == LCD_WINDOWED_MODE:
             layout["lcd"] = cabinet.WINDOWED_LCD
+        elif self.lcd_mode.get() == LCD_REGION_MODE:
+            layout[cabinet.LCD_RECT] = {key: value.get() for key, value in self.lcd_pixels.items()}
         return {role: key for role, key in layout.items() if key}
 
     def set_screen_choices(self, layout):
         windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
-        self.lcd_mode.set(LCD_WINDOWED_MODE if windowed else LCD_FULLSCREEN_MODE)
+        rect = layout.get(cabinet.LCD_RECT)
+        self.lcd_mode.set(LCD_WINDOWED_MODE if windowed else LCD_REGION_MODE if rect is not None
+                          else LCD_FULLSCREEN_MODE)
+        defaults = {"rx": 0, "ry": 0, "w": 1024, "h": 576}
+        for key, value in self.lcd_pixels.items():
+            value.set((rect or {}).get(key, defaults[key]))
         self.screen_choices = {}
         for role, variable in self.screen_vars.items():
             choices = {cabinet.DEFAULTS[role]: ""}
@@ -573,6 +592,11 @@ class PlayerWindow:
     def check_layout(self):
         layout = self.selected_layout()
         windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
+        rect = layout.get(cabinet.LCD_RECT)
+        if rect is None:
+            self.lcd_region.grid_remove()
+        else:
+            self.lcd_region.grid()
         self.screen_boxes["lcd"].configure(state="disabled" if windowed else "readonly")
         try:
             roles = cabinet.resolve(layout, self.screens)
@@ -581,7 +605,8 @@ class PlayerWindow:
         else:
             lcd = roles.get("lcd")
             if lcd:
-                text = f"The Stern LCD will run borderless fullscreen on {cabinet.screen_name(lcd)}."
+                mode = "in a borderless region" if rect is not None else "borderless fullscreen"
+                text = f"The Stern LCD will run {mode} on {cabinet.screen_name(lcd)}."
                 if lcd["primary"] and "playfield" not in roles:
                     text += " It can cover VPX if the playfield is also on that screen."
             elif windowed:
@@ -626,15 +651,18 @@ class PlayerWindow:
 
     def test_layout(self):
         self.refresh_screens()
+        layout = self.selected_layout()
         try:
-            roles = cabinet.resolve(self.selected_layout(), self.screens)
+            roles = cabinet.resolve(layout, self.screens)
         except ValueError as exc:
             messagebox.showerror("Test layout", str(exc), parent=self.root)
             return
         primary = self.screens[0]
         preview = []
+        rect = layout.get(cabinet.LCD_RECT)
+        lcd_mode = "borderless region" if rect is not None else "fullscreen"
         for monitor in self.screens:
-            labels = [cabinet.ROLES[role] + (" · fullscreen" if role == "lcd" else "")
+            labels = [cabinet.ROLES[role] + (f" · {lcd_mode}" if role == "lcd" else "")
                       for role, screen in roles.items() if screen == monitor]
             if monitor == primary:
                 for role in ("playfield", "lcd"):
@@ -642,7 +670,8 @@ class PlayerWindow:
                         mode = "Windowed" if role == "lcd" else cabinet.DEFAULTS[role]
                         labels.append(f"{cabinet.ROLES[role]} · {mode}")
             if labels:
-                preview.append((monitor, "\n".join(labels)))
+                bounds = cabinet.lcd_bounds(monitor, rect) if rect is not None and roles["lcd"] == monitor else monitor
+                preview.append((bounds, "\n".join(labels)))
         self.show_screens(preview, full=True)
 
     def dismiss_screens(self, _event=None):

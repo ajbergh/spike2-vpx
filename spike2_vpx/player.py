@@ -537,7 +537,8 @@ class Player:
         sessions.check_available(self.setup, game.title)
         board = self.setup.data / "rig-board"
         if self.setup.settings.get("cabinet_layout") is not None:
-            cabinet.apply(board, roles, monitors, None if disable_b2s else table)
+            cabinet.apply(board, roles, monitors, None if disable_b2s else table,
+                          lcd_rect=layout.get(cabinet.LCD_RECT))
         else:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
@@ -581,7 +582,10 @@ class Player:
 
     def save_layout(self, layout, monitors, profile=None):
         board = self.setup.data / "rig-board"
-        cabinet.apply(board, cabinet.resolve(layout, monitors), monitors)
+        if cabinet.LCD_RECT in layout:
+            layout = {**layout, cabinet.LCD_RECT: cabinet.lcd_rectangle(layout[cabinet.LCD_RECT])}
+        cabinet.apply(board, cabinet.resolve(layout, monitors), monitors,
+                      lcd_rect=layout.get(cabinet.LCD_RECT))
         self.setup.settings.pop("lcd_monitor", None)
         self.setup.settings["cabinet_layout"] = layout
         if profile:

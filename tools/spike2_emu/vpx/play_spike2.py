@@ -222,7 +222,7 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
     with ExitStack() as cleanup:
         cleanup.callback(launch.stop)
         command = [str(exe), "-ExtMinimized"]
-        target = vpx_lcd.fullscreen_target()
+        target = vpx_lcd.placement_target()
         overlay = target is None and vpx_lcd.windowed_overlay()
         if overlay:
             command.append("-DisableTrueFullscreen")

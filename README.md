@@ -218,14 +218,18 @@ Open **Cabinet** and select **Identify screens**. Assign the VPX playfield,
 B2S backglass, and Stern LCD to separate screens, or start with the
 **Single-screen preset**. Select **Test layout** to preview the assignments
 before saving. Use VPX windowed mode for app-managed playfield placement.
-Under **Stern LCD mode**, choose **Borderless fullscreen** or **Windowed**,
-then select **Save display layout**. Borderless fullscreen uses the screen
-selected under **Stern LCD screen**. The **Automatic (spare screen)** default
-uses a spare secondary screen when available and opens a window otherwise.
-Windows places the fullscreen LCD using the same display coordinates as
-**Identify screens**.
+Under **Stern LCD mode**, choose **Borderless fullscreen**, **Borderless
+region**, or **Windowed**, then select **Save display layout**.
+Borderless fullscreen fills the screen selected under **Stern LCD screen**.
+The **Automatic (spare screen)** default uses a spare secondary screen when
+available and opens a window otherwise.
+
+For a DMD cutout, choose **Borderless region** and select the DMD monitor.
+Enter the width and height in pixels and the X and Y offsets from the top-left
+of that monitor. For a centered 1024 × 576 cutout on a 1024 × 768 display, set
+X to 0 and Y to 96. **Test layout** previews the region before you save it.
+
 When the cabinet and Windows display numbers differ, Cabinet shows both.
-The renderer starts at the selected screen's size for fullscreen play.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
 Hover over the LCD and use **Ctrl+scroll** to resize it, or drag its window
 border. When SPIKE 2 VPX starts a game with a windowed LCD, it keeps the LCD

@@ -23,15 +23,21 @@ def windowed_overlay(board=None):
     return padisplay.load(Path(board or padlaunch.BOARD) / "display.conf")["mode"] in ("free", "window")
 
 
-def fullscreen_target(board=None):
+def placement_target(board=None):
     if sys.platform != "win32":
         return None
     setting = padisplay.load(Path(board or padlaunch.BOARD) / "display.conf")
-    if setting["mode"] != "fullscreen":
+    if setting["mode"] not in ("fullscreen", "region"):
         return None
     monitor = next((screen for screen in padisplay.monitors() if screen["n"] == setting["monitor"]), None)
     if monitor:
         x, y, width, height = (monitor[key] for key in ("x", "y", "w", "h"))
+        if setting["mode"] == "region":
+            if not all(key in setting for key in ("rx", "ry", "w", "h")):
+                return None
+            x += setting["rx"]
+            y += setting["ry"]
+            width, height = setting["w"], setting["h"]
         return x, y, x + width, y + height
     return None
 

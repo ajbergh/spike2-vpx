@@ -32,7 +32,7 @@ import sys
 #: the board every side reads (padlaunch.BOARD, core/rigslot.py)
 BOARD = os.path.join(os.path.expanduser("~"), ".pad-rig")
 CONF = os.path.join(BOARD, "display.conf")
-MODES = ("free", "fullscreen", "window")
+MODES = ("free", "fullscreen", "window", "region")
 
 
 def monitors():

@@ -19,9 +19,9 @@ class PreparedLaunchTest(unittest.TestCase):
         redirected = patch.object(play.padlaunch, "LOG", str(Path(logs.name) / "controller.log"))
         redirected.start()
         self.addCleanup(redirected.stop)
-        self.select_target = play.vpx_lcd.fullscreen_target
-        display = patch.object(play.vpx_lcd, "fullscreen_target", return_value=None)
-        self.fullscreen_target = display.start()
+        self.select_target = play.vpx_lcd.placement_target
+        display = patch.object(play.vpx_lcd, "placement_target", return_value=None)
+        self.placement_target = display.start()
         self.addCleanup(display.stop)
         overlay = patch.object(play.vpx_lcd, "windowed_overlay", return_value=False)
         self.windowed_overlay = overlay.start()
@@ -212,7 +212,7 @@ class PreparedLaunchTest(unittest.TestCase):
         launch = Mock(title="godzilla_le", slot=1, label="PAD-VPX-100")
         rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/1/root")
         target = (-1920, -90, 0, 990)
-        self.fullscreen_target.return_value = target
+        self.placement_target.return_value = target
         launch.start.side_effect = lambda: self.assertEqual(launch.windows_lcd, target)
         with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
                 patch.object(play, "wait_for_rig", return_value=rig), \
@@ -295,6 +295,8 @@ class PreparedLaunchTest(unittest.TestCase):
                 self.assertEqual(self.select_target(folder), (-1024, -150, 0, 618))
                 self.assertEqual(play.padcontroller.lcd_rect({"monitor": 3}, play.padcontroller.monitors()),
                                  (-1024, -150, 1024, 768))
+                path.write_text("game mode=region monitor=3 border=0 rx=0 ry=96 w=1024 h=576\n")
+                self.assertEqual(self.select_target(folder), (-1024, -54, 0, 522))
 
     def test_fullscreen_compensates_for_measured_wslg_frame_insets(self):
         with TemporaryDirectory() as folder:

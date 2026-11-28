@@ -437,12 +437,13 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
         player.preflight(game)
 
 
-def test_play_defaults_to_borderless_fullscreen_on_a_spare_display(player, tmp_path, monkeypatch):
+@pytest.mark.parametrize("custom", [False, True])
+def test_play_places_the_lcd_on_a_spare_display(player, tmp_path, monkeypatch, custom):
     from spike2_vpx import cabinet
     from spike2_vpx import player as module
 
     primary = {"n": 1, "x": 0, "y": 0, "w": 1920, "h": 1080, "primary": True, "device": "primary"}
-    spare = {"n": 2, "x": -1280, "y": 0, "w": 1280, "h": 720, "primary": False, "device": "spare"}
+    spare = {"n": 2, "x": -1024, "y": -150, "w": 1024, "h": 768, "primary": False, "device": "spare"}
     screens = [primary, spare]
     image, table = tmp_path / "card.raw", tmp_path / "Godzilla (PAD).vpx"
     image.touch()
@@ -458,10 +459,26 @@ def test_play_defaults_to_borderless_fullscreen_on_a_spare_display(player, tmp_p
         'Controller.GameName = "godzilla_le"\nCreateObject("PAD.Controller")'))
     monkeypatch.setattr(module.padlaunch, "Launch", Mock())
     path = tmp_path / "rig-board" / "display.conf"
+    if custom:
+        rect = {"rx": 0, "ry": 96, "w": 1024, "h": 576}
+        layout = {"lcd": "spare", cabinet.LCD_RECT: rect}
+        monkeypatch.setattr(module.padlaunch, "kit_load", lambda: {})
+        monkeypatch.setattr(module.padlaunch, "kit_save", Mock())
+        with pytest.raises(ValueError, match="must fit"):
+            player.save_layout({**layout, cabinet.LCD_RECT: {**rect, "ry": 200}}, screens)
+        player.save_layout(layout, screens, "Cabinet")
+        assert player.layout(screens) == player.profiles()["Cabinet"] == layout
+        assert "x=-1024 y=-54 w=1024 h=576 fs=0" in path.read_text()
+        path.unlink()  # The next launch must regenerate the rectangle from the saved profile.
 
     def start(*_, lighting_report, **__):
-        assert "monitor=2 mode=fullscreen border=0" in path.read_text()
-        assert "x=-1280 y=0 w=1280 h=720 fs=1" in path.read_text()
+        conf = path.read_text()
+        if custom:
+            assert "monitor=2 mode=region border=0 rx=0 ry=96" in conf
+            assert "x=-1024 y=-54 w=1024 h=576 fs=0" in conf
+        else:
+            assert "monitor=2 mode=fullscreen border=0" in conf
+            assert "x=-1024 y=-150 w=1024 h=768 fs=1" in conf
         lighting_report((), "Stern lighting skipped.")
         return 0
 
@@ -545,7 +562,8 @@ def test_game_metadata_and_backup_round_trip_without_machine_registration(player
     assert player.library()[0].last_played
     assert player.table_release(updated) == "Godzilla Limited Edition v2.6"
     assert module.image_version(original.image) == "1.16.0"
-    player.setup.settings.update(display_profiles={"Desktop": {"lcd": "windowed"}, "Cabinet": {}},
+    region = {"lcd": "dmd", "lcd_rect": {"rx": 0, "ry": 96, "w": 1024, "h": 576}}
+    player.setup.settings.update(display_profiles={"Desktop": {"lcd": "windowed"}, "Cabinet": region},
                                  display_profile="Desktop", volume=55, restart_boot="machine-only")
     path = tmp_path / "backup.json"
     support.atomic_write(path, module.json.dumps(support.backup(player.setup.settings, False)).encode())
@@ -559,6 +577,7 @@ def test_game_metadata_and_backup_round_trip_without_machine_registration(player
     assert player.setup.settings["volume"] == 55
     assert player.setup.settings["restart_boot"] == "machine-only"
     assert player.profiles()["Desktop"] == {"lcd": "windowed"}
+    assert player.profiles()["Cabinet"] == region
     cache_set.assert_called_once_with(False)
 
 

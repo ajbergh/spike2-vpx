@@ -18,7 +18,6 @@ from spike2_vpx.runtime import RUNTIME_VERSION
 
 PROFILES = ("Desktop", "Cabinet")
 BACKUP_FORMAT = "spike2-vpx-library"
-LAYOUT_ROLES = {"playfield", "backglass", "lcd"}
 
 
 def atomic_write(path, content):
@@ -40,6 +39,7 @@ def backup(settings, cache):
 
 
 def read_backup(path):
+    from spike2_vpx import cabinet
     from spike2_vpx.player import game_from_row
 
     with Path(path).open("rb") as file:
@@ -71,9 +71,13 @@ def read_backup(path):
     if not isinstance(profiles, dict) or set(profiles) - set(PROFILES):
         raise ValueError("The backup contains an invalid display profile.")
     for layout in [preferences.get("cabinet_layout", {}), *profiles.values()]:
-        if not isinstance(layout, dict) or any(role not in LAYOUT_ROLES or not isinstance(key, str)
-                                               for role, key in layout.items()):
+        if not isinstance(layout, dict) or any(role not in cabinet.ROLES or not isinstance(key, str)
+                                                for role, key in layout.items() if role != cabinet.LCD_RECT):
             raise ValueError("The backup contains an invalid display assignment.")
+        if cabinet.LCD_RECT in layout:
+            cabinet.lcd_rectangle(layout[cabinet.LCD_RECT])
+            if layout.get("lcd") == cabinet.WINDOWED_LCD:
+                raise ValueError("The backup assigns a Stern LCD region in windowed mode.")
     volume = preferences.get("volume", 100)
     if type(volume) is not int or not 0 <= volume <= 100:
         raise ValueError("The backup contains an invalid volume.")
