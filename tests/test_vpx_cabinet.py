@@ -213,6 +213,16 @@ def _bridge(tmp_path, kit):
     return pc, b
 
 
+def test_metallica_uses_the_mag_sensor_node_for_coffin_inputs_and_coils(tmp_path, monkeypatch):
+    pc = pytest.importorskip("padcontroller")
+    monkeypatch.setattr(pc, "USER_MAPS", str(tmp_path))
+    mapping = pc.VpxMap("metallica_spike")
+    for sam, spike in ((57, 89), (58, 90), (59, 91), (63, 101), (64, 88)):
+        assert mapping.switch_id(sam) == mapping.switch_id(1000 + spike) == spike
+    assert mapping.coil(51) == (10, 1)
+    assert mapping.coil(52) == (10, 0)
+
+
 def _data(pc, levels):
     data = bytearray(pc.READ_N)
     for (node, idx), v in levels.items():

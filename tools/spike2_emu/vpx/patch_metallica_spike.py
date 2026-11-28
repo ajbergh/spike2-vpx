@@ -66,6 +66,16 @@ def patch_script(src, m):
     drop_sw = {int(n) for n in re.findall(
         r"(?im)^\s*set\s+\w+\s*=\s*\(\s*new\s+droptarget\s*\)\s*\([^,]*,[^,]*,[^,]*,\s*(\d+)", src)}
 
+    # VPW's SAM processor gates switch 63 on two legacy solenoids. SPIKE 2
+    # reads ball presence from its magnet sensor directly.
+    src, magnet_sensors = re.subn(
+        r"(?ims)^([ \t]*Sub sw63_(?:Hit|unHit)[ \t]*)\r?\n.*?^[ \t]*End Sub\b",
+        r"\1\n\tController.Switch(63) = (sw63.BallCntOver > 0)\nEnd Sub",
+        src,
+    )
+    if magnet_sensors != 2:
+        raise SystemExit("the script is not the one this patcher knows: missing magnet sensor handlers")
+
     def need(tag):
         seen.add(tag)
 
@@ -156,6 +166,9 @@ def patch_script(src, m):
                           "LEFT" if mflip.group(1) == "15" else "RIGHT"))
             need("flip" + mflip.group(1))
             continue
+
+        if re.match(r'^solcallback\((?:57|58)\)\s*=\s*"updatecoffinprocessorboard\b', low):
+            continue  # SAM-only magnet processor. The sensor handlers now report ball presence.
 
         # ---- the drop-bank helpers used SAM's inverse polarity. PAD's
         # Switch API is logical: a dropped target makes its switch. Keep

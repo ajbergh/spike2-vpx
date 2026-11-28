@@ -37,9 +37,9 @@
     "35": 95, "36": 46, "37": 47, "38": 56, "39": 81, "40": 77, "41": 78, "42": 80,
     "43": 96, "44": 98, "45": 99, "46": 97, "47": 79, "50": 100,
     "51": 57, "52": 51, "53": 94, "54": 82, "55": 84, "56": 83,
-    "57": 0, "58": 0, "59": 0,
+    "57": 89, "58": 90, "59": 91,
     "60": 48, "61": 49, "62": 50,
-    "63": 0, "64": 0
+    "63": 101, "64": 88
   },
   "switch_notes": {
     "_": "how each SAM number was matched (object, position in drawing px, Spike 2 name); GUESS = check on the machine",
@@ -71,9 +71,9 @@
     "54": "sw54 kicker SNAKE EJECT",
     "55": "GUESS: JawLatch wall hit (ball against the closed jaw) -> SNAKE LATCH",
     "56": "GUESS: made while the jaw is open (SolSnakeJaw sets it, SnakeJawLatch clears it) -> SNAKE JAW OPEN",
-    "57-59": "coffin lock triggers sw57..59: the Spike 2 coffin switches are the Mag Sensor node's (node 10, ids 88-91 / 101-104, unnamed) - not mapped",
+    "57-59": "coffin lock triggers sw57..59 -> COFFIN LOCK 1..3 (node 10 bits 9..11)",
     "60-62": "drop targets BOT / MID / TOP; the table reports a RAISED target as made (SAM polarity)",
-    "63/64": "coffin magnet ball detect / coffin down: the SAM magnet processor board; no Spike 2 counterpart"
+    "63/64": "magnet area ball detect -> HAMMER MAGNET DETECT (node 10 bit 0); CoffinMagDown -> COFFIN MAGNET DOWN (node 10 bit 8)"
   },
   "switch_holds": {
     "_": "switches held while a ball sits somewhere (the table's physical trough serves them)",
@@ -86,8 +86,7 @@
       "Spike 2 coil [node, index] -> the SMALL number the table script sees it as: the SAM",
       "solenoid number the table's SolCallback already uses, except the flippers, which take",
       "core.vbs's Consts (sLRFlipper 46, sLLFlipper 48). Coil groups -> nodes from",
-      "group_node.txt; group 9 (the Mag Sensor board, node 10 in node_ident.txt) has no node",
-      "there because the census skipped that board, so its two coils are GUESS.",
+      "group_node.txt and node_ident.txt. Device table group 9 is node 10 (Mag Sensor).",
       "`dof`: the number DOF knows a coil by (the ROM's, mtl_180h's DOF config), where the",
       "key is not it - the flippers, SAM solenoids 15 and 16 (PAD-879)."
     ],
@@ -105,8 +104,8 @@
     "14": {"coil": [8, 2], "name": "RIGHT SLINGSHOT", "callback": null},
     "18": {"coil": [11, 1], "name": "ELECT CHAIR", "callback": "SolSparkyHead"},
     "20": {"coil": [11, 3], "name": "GRAVE MARKER MOTOR", "callback": "CrossMotor"},
-    "51": {"coil": [10, 1], "name": "COFFIN LOCK", "callback": "CLockRelease", "guess": "node 10 from node_ident.txt (group 9 = Mag Sensor)"},
-    "52": {"coil": [10, 0], "name": "COFFIN MAGNET DOWN", "callback": "CoffinMagDown", "guess": "node 10 from node_ident.txt (group 9 = Mag Sensor)"},
+    "51": {"coil": [10, 1], "name": "COFFIN LOCK", "callback": "CLockRelease"},
+    "52": {"coil": [10, 0], "name": "COFFIN MAGNET DOWN", "callback": "CoffinMagDown"},
     "53": {"coil": [9, 5], "name": "HAMMER", "callback": "Hammer"},
     "54": {"coil": [8, 7], "name": "3 BANK DROP", "callback": "ResetDTs"},
     "55": {"coil": [11, 2], "name": "LOOP UP POST", "callback": "OrbitPost"},
@@ -225,7 +224,8 @@
     "stern_switches_without_object": {
       "58": "LEFT FLIPPER EOS", "69": "RIGHT FLIPPER EOS",
       "70": "TROUGH 6", "71": "TROUGH 5", "76": "TROUGH JAM",
-      "88-91, 101-104": "Mag Sensor node (coffin): unnamed",
+      "102": "HAMMER MAGNET GRAB SUCCESS VIRTUAL",
+      "103/104": "HAMMER MAGNET STATUS LOWER/HIGHER BIT VIRTUAL",
       "105": "GRAVE MARKER MOTOR STOPPED VIRTUAL"
     },
     "stern_leds_without_light": [
