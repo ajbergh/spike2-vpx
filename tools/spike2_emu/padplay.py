@@ -98,7 +98,9 @@ def open_source(argv):
 
 
 def main():
-    read, close, src_desc, rest = open_source(sys.argv[1:])
+    argv = sys.argv[1:]
+    watch_transport = argv[:1] != ["--fifo"]
+    read, close, src_desc, rest = open_source(argv)
     rate = int(rest[0]) if rest else 44100
     ch = int(rest[1]) if len(rest) > 1 else 2
 
@@ -274,13 +276,9 @@ def main():
                   # level, not at unity for one poll interval
     with stream:
         last = looked = time.monotonic()
-        # No-data watchdog. The guest streams CONTINUOUSLY (silence included),
-        # so a feed that stops entirely means the transport died under us —
-        # seen live 2026-08-31 as a half-open WSL localhost-proxy connection:
-        # the socket stayed "connected" but never delivered another byte, the
-        # player idled forever, and the run was silent with no line saying so.
-        # Exiting hands recovery to playaudio.sh's restart loop, which spawns
-        # a fresh player and a fresh connection.
+        # The TCP relay sends a silent frame during idle periods. A dead
+        # WSL localhost proxy can then be recovered by the shell's restart
+        # loop. The native FIFO can legitimately be quiet indefinitely.
         fed_last = (stats["fed"], time.monotonic())
         while not done.is_set() or len(buf) > 0:
             time.sleep(0.25)
@@ -288,8 +286,8 @@ def main():
             now = time.monotonic()
             if stats["fed"] != fed_last[0]:
                 fed_last = (stats["fed"], now)
-            elif now - fed_last[1] > 25:
-                print("[padplay] no data for 25 s - transport presumed dead, "
+            elif watch_transport and now - fed_last[1] > 25:
+                print("[padplay] no audio or heartbeat for 25 s - transport presumed dead, "
                       "exiting for a fresh connection", flush=True)
                 done.set()
                 close()
