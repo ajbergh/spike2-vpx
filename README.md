@@ -297,7 +297,19 @@ Run `.\scripts\build-windows-installer.ps1` with full x64 Python with Tcl/Tk
 and Inno Setup 6.3 or later. The build writes
 `installer\Output\SPIKE2-VPX-Setup.exe`. The installer bundles the tools and
 Python. The first setup downloads the upstream runtime image and verifies
-its pinned SHA-256. Uninstall preserves the private runtime and player data.
+its pinned SHA-256.
+
+### Uninstall
+
+Uninstall from Windows **Installed apps** under the same Windows account that
+set up the emulator. Uninstall closes the bundled SPIKE 2 VPX processes and
+removes the private `SPIKE2-VPX` WSL runtime, the controller registration,
+and the app's local settings, logs, runtime download, and cached card copies.
+This includes the current `SPIKE2-VPX-cardcache` subfolder if one was selected
+in setup. High scores and machine settings inside the runtime are deleted.
+Keep any generated image you want to retain outside the app's cache before
+uninstalling. Original SD-card downloads, external images, VPX tables, and
+other WSL distributions are kept. WSL itself is shared and stays installed.
 
 ```powershell
 python -m pip install -r requirements-dev.txt

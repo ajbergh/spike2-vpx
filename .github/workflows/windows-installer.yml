@@ -90,6 +90,29 @@ jobs:
               Pop-Location
           }
 
+          $cache = Join-Path $env:RUNNER_TEMP 'SPIKE 2 VPX smoke cache parent'
+          $cached = Join-Path $cache 'SPIKE2-VPX-cardcache\imports'
+          $source = Join-Path $cache 'original.zip'
+          New-Item -ItemType Directory -Path $cached -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $cached 'game.raw') -Value 'cache fixture'
+          Set-Content -LiteralPath $source -Value 'source fixture'
+          Set-Content -LiteralPath (Join-Path $target 'storage.ini') -Value @('[Storage]', "cache = $cache")
+          $uninstallLog = Join-Path $env:RUNNER_TEMP 'SPIKE2-VPX-uninstall.log'
+          $player = Start-Process -FilePath (Join-Path $target 'python\python.exe') -ArgumentList '-B -c "import time; time.sleep(180)"' -PassThru -WindowStyle Hidden
+          try {
+              $removed = Start-Process -FilePath (Join-Path $target 'unins000.exe') -ArgumentList @(
+                  '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$uninstallLog`""
+              ) -Wait -PassThru -WindowStyle Hidden
+              $player.Refresh()
+              if ($removed.ExitCode -ne 0 -or !$player.HasExited -or (Test-Path -LiteralPath (Join-Path $target 'python\python.exe')) -or
+                  (Test-Path -LiteralPath $cached) -or !(Test-Path -LiteralPath $source)) {
+                  Get-Content -LiteralPath $uninstallLog -Tail 60
+                  throw 'Uninstall failed to stop the bundled process or clean up the installed files and cache.'
+              }
+          } finally {
+              if (!$player.HasExited) { Stop-Process -Id $player.Id }
+          }
+
       - name: Stage the installer and checksum
         env:
           INSTALLER_NAME: ${{ steps.version.outputs.installer }}

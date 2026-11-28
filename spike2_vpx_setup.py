@@ -122,17 +122,18 @@ def distro_registration():
 
 
 class Setup:
-    def __init__(self, data=None):
+    def __init__(self, data=None, *, log_to_file=True):
         self.data = Path(data or Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Spike2Vpx")
         self.log_path = self.data / "logs" / "setup.log"
         self.platform_log = self.log_path.with_name("wsl-platform.log")
         self.controller_log = self.log_path.with_name("controller-registration.log")
         self.settings_path = self.data / "setup.json"
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log = logging.Logger("spike2-vpx-setup")
-        handler = logging.FileHandler(self.log_path, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        self.log.addHandler(handler)
+        if log_to_file:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(self.log_path, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            self.log.addHandler(handler)
         try:
             settings = json.loads(self.settings_path.read_text(encoding="utf-8"))
             self.settings = settings if isinstance(settings, dict) else {}

@@ -15,9 +15,13 @@ SolidCompression=yes
 SetupIconFile={#ProjectDir}\assets\spike2_vpx.ico
 UninstallDisplayIcon={app}\assets\spike2_vpx.ico
 
+[Messages]
+ConfirmUninstall=Remove %1, its private emulator runtime, and its local settings and cache? Scores and settings stored inside the emulator will be deleted.
+
 [Files]
 Source: "{#ProjectDir}\Spike2Vpx.pyw"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\spike2_vpx_setup.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\spike2_vpx_uninstall.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\Play-Spike2Vpx.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\installer\setup_spike2_wsl.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
@@ -33,15 +37,34 @@ Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: "
 [Run]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"" --setup"; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX and set up its requirements"; Flags: postinstall nowait runasoriginaluser skipifsilent
 
-[UninstallRun]
-Filename: "{app}\python\python.exe"; Parameters: """{app}\tools\spike2_emu\vpx\standalone_controller.py"" unregister"; Flags: runhidden waituntilterminated; RunOnceId: "spike2-vpx-controller"
-
 [UninstallDelete]
 Type: files; Name: "{app}\storage.ini"
 
 [Code]
 var
   StoragePage: TInputQueryWizardPage;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Status: Integer;
+  Report: String;
+  Details: TArrayOfString;
+begin
+  if CurUninstallStep <> usUninstall then
+    Exit;
+  UninstallProgressForm.StatusLabel.Caption := 'Stopping and removing the SPIKE 2 runtime...';
+  Report := ExpandConstant('{tmp}\spike2-vpx-cleanup.txt');
+  if not Exec(ExpandConstant('{app}\python\python.exe'),
+      ExpandConstant('-I -B "{app}\spike2_vpx_uninstall.py" "') + Report + '"',
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Status) then
+    RaiseException('Could not start SPIKE 2 VPX cleanup. ' + SysErrorMessage(Status));
+  if Status <> 0 then
+  begin
+    if LoadStringsFromFile(Report, Details) and (GetArrayLength(Details) > 0) then
+      RaiseException(Details[0]);
+    RaiseException('SPIKE 2 VPX cleanup failed. Exit code ' + IntToStr(Status) + '.');
+  end;
+end;
 
 procedure BrowseStorage(Sender: TObject);
 var
