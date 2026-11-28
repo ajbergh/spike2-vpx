@@ -585,10 +585,11 @@ class Launch:
             env.extend(["PAD_WINDOWS_LCD=1", "PAD_WINDOWS_LCD_W=%d" % (right - x),
                         "PAD_WINDOWS_LCD_H=%d" % (bottom - y),
                         "PAD_WINDOWS_LCD_FRAME=" + self.lcd_frame_path().name])
+        if self.prepared or (self.distro or "").casefold() == RUNTIME_DISTRO.casefold():
+            env.append("PAD_VPX_PERSIST=1")
         if self.prepared:
             env += ["PAD_SELECT=0", "PAD_TOPPER=%d" % self.lighting_topper, "PAD_BALL_FEED=0",
-                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0",
-                     "PAD_VPX_PERSIST=1"]
+                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]
             if self.lighting_topper:
                 env.append("PAD_GL2_OFF=1")
             if self.game_dir:

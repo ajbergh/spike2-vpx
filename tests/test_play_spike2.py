@@ -113,6 +113,20 @@ class PreparedLaunchTest(unittest.TestCase):
         self.assertEqual(env["PAD_SELECT"], "0")
         self.assertEqual(env["PAD_VPX_PERSIST"], "1")
 
+    def test_controller_launch_uses_persistent_saves_on_the_installed_runtime(self):
+        mod = play.padlaunch
+        with patch.object(mod.padpath, "to_wsl", side_effect=lambda path, _: path), \
+                patch.object(mod, "win_python", return_value=None):
+            for distro in (mod.RUNTIME_DISTRO, "Other-Linux"):
+                with self.subTest(distro=distro):
+                    launch = mod.Launch("godzilla_le", "/cards/godzilla.raw", dist=distro)
+                    launch.slot = 1
+                    launch.board_env = Mock(return_value=[])
+                    launch.cache_env = Mock(return_value=[])
+                    env = dict(value.split("=", 1) for value in launch.env())
+                    self.assertEqual(env.get("PAD_VPX_PERSIST"), "1" if distro == mod.RUNTIME_DISTRO else None)
+                    self.assertNotIn("PAD_SELECT", env)
+
     def test_card_prepares_the_guest_filesystem_before_starting_the_rig(self):
         mod = play.padlaunch
         with patch.object(mod.padpath, "to_wsl", return_value="/mnt/c/Game Card.raw"), \

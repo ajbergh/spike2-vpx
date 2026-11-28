@@ -2470,6 +2470,7 @@ launch_game() {
                PAD_AUDIO_FMT="${PAD_AUDIO_FMT:-}" \
                PAD_VID="${PAD_VID:-0}" PAD_VID_SHM="${PAD_VID_SHM:-}" \
                PAD_GAME="$GAME" PAD_CARD="${PAD_CARD:-}" PAD_GAME_DIR="${PAD_GAME_DIR:-}" \
+               PAD_VPX_PERSIST="${PAD_VPX_PERSIST:-0}" \
                PAD_PIVOT="${PAD_PIVOT:-}" PAD_OVERRIDE_DIR="${PAD_OVERRIDE_DIR:-}" \
                PAD_PIVOT="${PAD_PIVOT:-}" PAD_SELECT="${PAD_SELECT:-0}" \
                PAD_SELECT_AUTO="${PAD_SELECT_AUTO:-0}" \
@@ -3041,7 +3042,7 @@ if [ "${PAD_EVENTS:-1}" != 0 ]; then
         /\[padglhost\] .*headless/ { print "[event] " $0; fflush(); next }
         # [select] is the boot selector (item 90): the menu, the keys it saw,
         # the choice and any fallback - run_game.sh prints them into $LOG.
-        /\[vid\]|\[card\]|\[select\]/ { print "[event] " $0; fflush(); next }
+        /\[vid\]|\[card\]|\[select\]|\[save\]/ { print "[event] " $0; fflush(); next }
         # [swpend]/[swlatch] were silently dropped here until 2026-08-13 -
         # run 6 exported PAD_SW_PEND and got a console with zero swpend
         # lines, which read as "instrument dead" until this filter was
