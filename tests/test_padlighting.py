@@ -178,7 +178,7 @@ class LightingTests(unittest.TestCase):
         with (patch.object(play_spike2.padcontroller.Rig, "board_run", return_value=None),
               patch.object(play_spike2, "wait_for_rig", return_value=rig),
               patch.object(play_spike2, "wait_for_game"),
-              patch.object(play_spike2.vpx_lcd, "fullscreen_target", return_value=None),
+              patch.object(play_spike2.vpx_lcd, "placement_target", return_value=None),
               patch.object(play_spike2, "lighting_sources", return_value=(sources, roles)),
               patch.object(lighting, "prepare", return_value=config),
               patch.object(lighting, "Session", claim),

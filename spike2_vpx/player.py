@@ -6,24 +6,28 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+import subprocess
+from tempfile import NamedTemporaryFile, TemporaryDirectory, TemporaryFile
+from time import monotonic
 from urllib.parse import urlsplit
 from uuid import uuid4
 from xml.etree.ElementTree import ParseError, iterparse
 from zipfile import BadZipFile, ZipFile
 
-from spike2_vpx_setup import APP, DISTRO, RIG
+from spike2_vpx_setup import APP, DISTRO, RIG, distro_registration
 
 # The setup module loads the VPX kit from the same location as the console launcher.
 import padisplay
 import padlaunch
+import cardcopy
+from inspect_vpx_card import imported_image_name
 import padlighting
 import padvpx
 import play_spike2
-from spike2_vpx import cabinet, runtime, sessions, support
+from spike2_vpx import cabinet, runtime, sessions, storage, support
 
 STERN_IMAGES = "https://www.sternpinball.com/support/sd-cards/"
 BACKGLASS_ART = APP / "assets" / "backglasses"
@@ -66,6 +70,15 @@ def artwork_paths(game):
 def image_version(name):
     match = re.search(r"(?<![0-9])v?([0-9]{1,2})[._]([0-9]{1,2})[._]([0-9]{1,3})(?![0-9])", name)
     return ".".join(match.groups()) if match else ""
+
+
+def is_newer_image(image, previous):
+    if image.title != previous.title or Path(image.image) == Path(previous.image):
+        return False
+    versions = [re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", game.image_version)
+                for game in (image, previous)]
+    return all(versions) and tuple(map(int, image.image_version.split("."))) > tuple(
+        map(int, previous.image_version.split(".")))
 
 
 def game_from_row(row):
@@ -165,6 +178,70 @@ class Player:
         self.setup.save()
         return game
 
+    def managed_card(self, game):
+        """Recognize compact imports in the app's Windows or WSL import directories."""
+        path = Path(game.image)
+        if not re.fullmatch(re.escape(game.title[:200]) + r"-[0-9a-f]{32}\.raw", path.name):
+            return None
+        windows = PureWindowsPath(game.image)
+        wsl = (windows.drive.casefold() in (rf"\\wsl.localhost\{DISTRO}".casefold(), rf"\\wsl$\{DISTRO}".casefold())
+               and len(windows.parts) == 8
+               and windows.parts[1] == "home"
+               and windows.parts[3:-1] == (".local", "share", "spike2-vpx", "images"))
+        try:
+            if wsl:
+                folder = path.parent
+            else:
+                cache = next((root for root in storage.cache_folders(APP) if path.parent == root / "imports"), None)
+                if cache is None:
+                    return None
+                folder = cache.resolve(strict=True) / "imports"
+            if not path.is_symlink() and path.is_file() and path.resolve(strict=True) == folder / path.name:
+                return path
+        except OSError:
+            pass
+        return None
+
+    def install_image(self, image, previous=None):
+        """Save an image, then retire a superseded compact import if it is no longer used."""
+        library = self.library()
+        managed = self.managed_card(image)
+        matches = [game for game in library if game.title == image.title]
+        if previous not in library:
+            previous = None
+        if previous is None and managed and len(matches) == 1:
+            old = matches[0]
+            if is_newer_image(image, old) and self.managed_card(old):
+                previous = old
+        if previous is None:
+            saved = next((row for row in matches if Path(row.image) == Path(image.image)), None)
+            if saved is None:
+                self.save(image)
+            return saved or image, ""
+
+        saved = self.relink_image(previous, image)
+        removed_version = ""
+        if is_newer_image(image, previous) and self.retire_card(previous):
+            removed_version = previous.image_version
+        return saved, removed_version
+
+    def retire_card(self, game):
+        try:
+            old = self.managed_card(game)
+            if old is None:
+                return False
+            resolved = old.resolve()
+            if any(Path(row.image).resolve() == resolved for row in self.library()):
+                return False
+            if any(sessions.records(self.setup, game.title)):
+                return False
+            old.unlink()
+        except (OSError, RuntimeError):
+            self.setup.log.warning("Could not remove superseded card image %s", game.image, exc_info=True)
+            return False
+        self.setup.log.info("Removed superseded %s %s import at %s", game.title, game.image_version, old)
+        return True
+
     def inspect_image(self, path):
         image = file_of_type(path, ".raw")
         paths = padlaunch.padpath.to_wsl_many([str(RIG), str(image)], DISTRO)
@@ -178,51 +255,164 @@ class Player:
             raise ValueError(error)
         return Game(json.loads(out.stdout)["title"], str(image), image_version=image_version(image.name))
 
-    def import_archive(self, path, expected=None):
+    def import_archive(self, path, expected=None, *, progress=None):
         source = file_of_type(path, ".zip")
-        directory = self.setup.data / "images"
-        directory.mkdir(parents=True, exist_ok=True)
+        key = os.path.normcase(str(source))
+        imports = self.setup.settings.get("zip_imports")
+        if not isinstance(imports, dict):
+            imports = {}
         try:
-            with ZipFile(source) as archive:
+            with source.open("rb") as file, ZipFile(file) as archive:
                 images = [member for member in archive.infolist()
                           if not member.is_dir() and Path(member.filename).suffix.casefold() == ".raw"
                           and not member.filename.startswith("__MACOSX/")]
                 if len(images) != 1 or images[0].file_size == 0:
                     raise ValueError("Import a ZIP containing one non-empty .raw image, or extract the image yourself.")
                 member = images[0]
-                if member.file_size > shutil.disk_usage(directory).free:
-                    raise ValueError(f"Free up space on {directory.anchor} to extract this image "
-                                     f"({member.file_size / 1024**3:.1f} GiB required).")
-                # Use app-owned names. An archive entry cannot choose where we write.
-                with TemporaryDirectory(dir=directory) as stage:
-                    extracted = Path(stage) / "card.raw"
-                    with archive.open(member) as data, extracted.open("wb") as out:
-                        shutil.copyfileobj(data, out, length=1024 * 1024)
-                    game = self.inspect_image(extracted)
-                    if expected and game.title != expected.title:
-                        raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
-                    destination = directory / (uuid4().hex + ".raw")
-                    extracted.replace(destination)
+                info = os.fstat(file.fileno())
+                signature = [info.st_size, info.st_mtime_ns, info.st_ino,
+                             member.filename, member.file_size, member.CRC]
+                cached = imports.get(key)
+                if isinstance(cached, dict) and cached.get("signature") == signature:
+                    game = game_from_row(cached.get("game"))
+                    if game and Path(game.image).is_file():
+                        self.check_image_title(game, expected)
+                        return game
+                with archive.open(member) as data:
+                    if padlaunch.cache_on():
+                        game = self.import_local_card(data, member.file_size, expected, progress=progress)
+                    else:
+                        game = self.extract_card(data, member.file_size, expected, progress=progress)
         except (BadZipFile, RuntimeError, NotImplementedError) as exc:
             raise ValueError(f"Unable to extract this ZIP. Download it again or extract the .raw manually. {exc}") from exc
-        return replace(game, image=str(destination), image_version=image_version(Path(member.filename).name)
-                       or image_version(source.name))
+        game = replace(game, image_version=image_version(Path(member.filename).name) or image_version(source.name))
+        imports[key] = {"signature": signature, "game": asdict(game)}
+        self.setup.settings["zip_imports"] = imports
+        self.setup.save()
+        return game
 
-    def prepare_image(self, path, expected=None):
-        imported = Path(path).suffix.casefold() == ".zip"
-        game = self.import_archive(path, expected) if imported else self.inspect_image(path)
+    @staticmethod
+    def copy_card(data, out, size, message, progress, *, sparse=False):
+        if not progress and not sparse:
+            shutil.copyfileobj(data, out, length=1024 * 1024)
+            return
+        chunk = 128 * 1024 if sparse else 1024 * 1024
+        zero = bytes(chunk) if sparse else None
+        done = 0
+        if progress:
+            progress(message, 0, size)
+        next_update = monotonic() + 0.25
+        while block := data.read(chunk):
+            if zero is not None and block == zero[:len(block)]:
+                out.seek(len(block), os.SEEK_CUR)
+            else:
+                out.write(block)
+            done += len(block)
+            now = monotonic()
+            if progress and (done == size or now >= next_update):
+                progress(message, done, size)
+                next_update = now + 0.25
+        if sparse:
+            if done != size:
+                raise ValueError("The ZIP image transfer stopped before it was complete.")
+            out.truncate(size)
+
+    def extract_card(self, data, size, expected, *, progress=None):
+        directory = self.setup.data / "images"
+        directory.mkdir(parents=True, exist_ok=True)
+        if size > shutil.disk_usage(directory).free:
+            raise ValueError(f"Free up space on {directory.anchor} to extract this image "
+                             f"({size / 1024**3:.1f} GiB required).")
+        with TemporaryDirectory(dir=directory) as stage:
+            extracted = Path(stage) / "card.raw"
+            with extracted.open("wb") as out:
+                self.copy_card(data, out, size, "Extracting the SD-card image…", progress)
+            if progress:
+                progress("Verifying the SD-card image…")
+            game = self.inspect_image(extracted)
+            self.check_image_title(game, expected)
+            destination = directory / (uuid4().hex + ".raw")
+            extracted.replace(destination)
+        return replace(game, image=str(destination))
+
+    def import_local_card(self, data, size, expected, *, progress=None):
+        cache = storage.cache_folder(APP)
+        if cache is not None:
+            return self.import_windows_card(data, size, expected, cache / "imports", progress=progress)
+        # The Windows process already has access to the ZIP, including on an SMB share.
+        # WSL only receives bytes, so it does not need the share mounted or credentials.
+        rig = padlaunch.padpath.to_wsl(str(RIG), DISTRO)
+        registration = distro_registration()
+        runtime_dir = registration[0] if registration else self.setup.runtime_dir
+        # Leave the same host-drive margin as the runtime cache. WSL's virtual disk
+        # can report free space even when its backing drive is almost full.
+        budget = max(0, shutil.disk_usage(runtime_dir.anchor).free - 4 * 1024**3)
+        command = padlaunch.wsl_head(DISTRO) + ["-e", "python3", "-B", rig + "/import_vpx_card.py",
+                                                str(size), str(budget), expected.title if expected else "-"]
+        with TemporaryFile() as output:
+            with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                                  env=dict(os.environ, WSL_UTF8="1"),
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as child:
+                try:
+                    with child.stdin as stream:
+                        self.copy_card(data, stream, size, "Copying the SD-card image to local storage…", progress)
+                        # ZIP CRC checking finishes at EOF. Only publish after that succeeds.
+                        stream.write(b"\x01")
+                    if progress:
+                        progress("Verifying and compacting the local image…")
+                except BrokenPipeError:
+                    pass  # The importer stopped reading and reports the reason below.
+            output.seek(0)
+            reply = runtime._text(output.read()).strip()
+        try:
+            result = json.loads(reply.splitlines()[-1])
+        except (IndexError, ValueError) as exc:
+            raise ValueError(reply or "The SPIKE 2 runtime did not finish importing the image.") from exc
+        if child.returncode:
+            raise ValueError(result["error"])
+        game = Game(result["title"], result.get("image", ""))
+        self.check_image_title(game, expected)
+        return game
+
+    def import_windows_card(self, data, size, expected, directory, *, progress=None):
+        directory.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=directory) as stage:
+            extracted = Path(stage) / "card.raw"
+            with extracted.open("w+b") as out:
+                try:
+                    storage.set_sparse(out)
+                except OSError as exc:
+                    raise ValueError(f"Could not create a sparse file in {directory}. "
+                                     f"Use a cache folder on a drive that supports sparse files. {exc}") from exc
+                self.copy_card(data, out, size, "Copying the SD-card image to the selected cache…", progress,
+                               sparse=True)
+                out.flush()
+                if progress:
+                    progress("Verifying and compacting the local image…")
+                game = self.inspect_image(extracted)
+                self.check_image_title(game, expected)
+                storage.set_sparse(out, unused=cardcopy.unused_ranges(extracted))
+                os.fsync(out.fileno())
+            destination = directory / imported_image_name(game.title)
+            extracted.replace(destination)
+        return replace(game, image=str(destination))
+
+    @staticmethod
+    def check_image_title(game, expected):
         if expected and game.title != expected.title:
             raise ValueError(f"This image is for {game.name}. Choose an image for {expected.name}.")
+
+    def prepare_image(self, path, expected=None, *, progress=None):
+        if Path(path).suffix.casefold() == ".zip":
+            return self.import_archive(path, expected, progress=progress), "The verified local image is ready."
+        game = self.inspect_image(path)
+        self.check_image_title(game, expected)
         if not padlaunch.cache_on():
-            note = "Extracted and verified the ZIP image." if imported else "Read directly from the source image."
-            return game, note
-        try:
-            launch = padlaunch.Launch(game.title, game.image, dist=DISTRO, prepared=True)
-            info = launch.cache_check()
-        except Exception:
-            if imported:
-                Path(game.image).unlink(missing_ok=True)
-            raise
+            return game, "Read directly from the source image."
+        if progress:
+            progress("Checking space for the SD-card cache…")
+        launch = padlaunch.Launch(game.title, game.image, dist=DISTRO, prepared=True)
+        info = launch.cache_check()
         return game, padlaunch.space_words(info or {})[1] + "."
 
     def layout(self, monitors):
@@ -312,6 +502,7 @@ class Player:
         mapping = padlaunch.table_map(title)
         if not mapping or padlaunch.game_for(title).casefold() != game.title:
             raise ValueError(f"This table is prepared for {title}. Choose a table for {game.name}.")
+        padvpx.require_script_release(script, mapping)
         if ("padspike2.vbs" in script.casefold()
                 and not (table.parent / "PADSPIKE2.vbs").is_file()):
             raise ValueError("PADSPIKE2.vbs is missing beside this table. Choose the original VPX file to prepare a new copy.")
@@ -400,7 +591,7 @@ class Player:
             return frozenset(roles)
         return None
 
-    def play(self, game, progress, timeout=180, *, lighting_update=None, cache_update=None):
+    def play(self, game, progress, timeout=180, *, lighting_update=None, cache_update=None, activity=None):
         exe = self.setup.vpx_executable()
         if exe is None or self.setup.check_vpx().state != "Ready":
             raise ValueError("Choose a compatible Visual Pinball X executable in Setup.")
@@ -419,12 +610,13 @@ class Player:
         sessions.check_available(self.setup, game.title)
         board = self.setup.data / "rig-board"
         if self.setup.settings.get("cabinet_layout") is not None:
-            cabinet.apply(board, roles, monitors, None if disable_b2s else table)
+            cabinet.apply(board, roles, monitors, None if disable_b2s else table,
+                          lcd_rect=layout.get(cabinet.LCD_RECT))
         else:
             cabinet.apply_lcd(board, roles.get("lcd"), monitors)
         progress("Starting Stern", False)
         launch = padlaunch.Launch(title, game.image, dist=DISTRO, minutes=0, prepared=True,
-                                  audio_control=str(self.audio_path), cache_update=cache_update)
+                                  audio_control=str(self.audio_path), cache_update=cache_update, activity=activity)
         started = False
         lighting_record = self.lighting_record(game)
 
@@ -463,7 +655,10 @@ class Player:
 
     def save_layout(self, layout, monitors, profile=None):
         board = self.setup.data / "rig-board"
-        cabinet.apply(board, cabinet.resolve(layout, monitors), monitors)
+        if cabinet.LCD_RECT in layout:
+            layout = {**layout, cabinet.LCD_RECT: cabinet.lcd_rectangle(layout[cabinet.LCD_RECT])}
+        cabinet.apply(board, cabinet.resolve(layout, monitors), monitors,
+                      lcd_rect=layout.get(cabinet.LCD_RECT))
         self.setup.settings.pop("lcd_monitor", None)
         self.setup.settings["cabinet_layout"] = layout
         if profile:

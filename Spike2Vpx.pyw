@@ -7,13 +7,15 @@ from datetime import datetime
 import json
 from pathlib import Path
 import queue
+import sys
 import threading
+from time import monotonic
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
 from spike2_vpx.player import STERN_IMAGES, Player, artwork_paths, folder_images, image_version, supported_tables
-from spike2_vpx_setup import ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
+from spike2_vpx_setup import REINSTALL_RUNTIME, ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
 from spike2_vpx import backglass, cabinet, lighting, sessions, support
 import padisplay
 import padlaunch
@@ -23,7 +25,14 @@ import play_spike2
 LAUNCH_STAGES = ("Checking files", "Starting Stern", "Connecting controller", "Opening VPX")
 BACKGROUND, SURFACE, TEXT, MUTED, ACCENT = "#11151c", "#1b2330", "#edf2f7", "#acbbcd", "#79ddc5"
 LCD_FULLSCREEN_MODE = "Borderless fullscreen"
+LCD_REGION_MODE = "Borderless region"
 LCD_WINDOWED_MODE = "Windowed"
+RUNTIME_CONFIRMATIONS = (REINSTALL_RUNTIME, "convert_runtime")
+
+
+def window_title():
+    version = support.app_version()
+    return "SPIKE 2 VPX" if version == "Source checkout" else f"SPIKE 2 VPX {version.removesuffix('.0')}"
 
 
 def configure_style(root):
@@ -40,8 +49,14 @@ def configure_style(root):
     style.configure("CabinetText.TLabel", font=("Segoe UI", 17))
     style.configure("Section.TLabel", font=("Segoe UI", 12, "bold"))
     style.configure("Hint.TLabel", foreground=MUTED)
+    style.configure("Activity.TFrame", background=SURFACE)
+    style.configure("Activity.TLabel", background=SURFACE, foreground=TEXT)
+    style.configure("ActivityDetail.TLabel", background=SURFACE, foreground=MUTED)
+    style.configure("Activity.Horizontal.TProgressbar", background=ACCENT, bordercolor=SURFACE,
+                    lightcolor=ACCENT, darkcolor=ACCENT, thickness=8)
     style.configure("TButton", background=SURFACE, padding=(10, 5))
     style.map("TButton", background=[("active", "#35475d")], foreground=[("disabled", "#8595a8")])
+    style.configure("Fix.TButton", padding=(6, 2), foreground=ACCENT)
     style.configure("Primary.TButton", background=ACCENT, foreground=BACKGROUND, padding=(18, 9),
                     font=("Segoe UI", 12, "bold"))
     style.map("Primary.TButton", background=[("disabled", SURFACE), ("active", "#acf1e1")],
@@ -104,7 +119,7 @@ def game_preview(root, game, width, height):
 
 
 class PlayerWindow:
-    def __init__(self, root, setup):
+    def __init__(self, root, setup, *, auto_setup=False):
         self.root = root
         self.setup = setup
         self.player = Player(setup)
@@ -118,6 +133,7 @@ class PlayerWindow:
         self.game = None
         self.cache_note = ""
         self.first_check = True
+        self.vpx_prompted = False
         self.cabinet_mode = False
         self.recover_game = None
         self.launch_error_game = None
@@ -126,7 +142,12 @@ class PlayerWindow:
         self.cache_notice = ""
         self.lighting_notice = ""
         self.details_open = False
-        root.title("SPIKE 2 VPX")
+        self.activity_phase = tk.StringVar()
+        self.activity_detail = tk.StringVar()
+        self.activity_started = 0.0
+        self.activity_bytes = ""
+        self.activity_widgets = []
+        root.title(window_title())
         root.geometry("960x730")
         root.minsize(840, 660)
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -163,15 +184,28 @@ class PlayerWindow:
         self.build_cabinet_mode()
 
         status = ttk.Frame(page)
-        status.pack(fill="x", pady=(12, 0))
+        status.pack(side="bottom", fill="x", pady=(12, 0), before=self.tabs)
         self.summary = ttk.Label(status, wraplength=650, justify="left")
-        self.summary.pack(side="left", fill="x", expand=True)
-        self.progress = ttk.Progressbar(status, mode="indeterminate", length=110)
-        self.progress.pack(side="right", padx=(12, 0))
+        self.summary.pack(fill="x")
+        self.build_activity(status)
         self.tabs.select(self.setup_page)
         self.reload_library()
-        self.check_again()
+        if auto_setup:
+            self.repair()
+        else:
+            self.check_again()
         self.tabs.bind("<<NotebookTabChanged>>", self.tab_changed, add="+")
+
+    def build_activity(self, parent):
+        panel = ttk.Frame(parent, style="Activity.TFrame", padding=(12, 8))
+        panel.columnconfigure(0, weight=1)
+        ttk.Label(panel, textvariable=self.activity_phase, style="Activity.TLabel",
+                  wraplength=560).grid(row=0, column=0, sticky="w")
+        ttk.Label(panel, textvariable=self.activity_detail, style="ActivityDetail.TLabel").grid(
+            row=0, column=1, sticky="e", padx=(12, 0))
+        bar = ttk.Progressbar(panel, style="Activity.Horizontal.TProgressbar")
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.activity_widgets.append((panel, bar))
 
     def build_games(self):
         page = self.games_page
@@ -231,7 +265,7 @@ class PlayerWindow:
         self.backglass_button = ttk.Button(pairing, text="Attach backglass…", command=self.attach_backglass)
         self.backglass_button.pack(side="left", padx=(8, 0))
 
-        actions = ttk.Frame(detail)
+        self.game_actions = actions = ttk.Frame(detail)
         actions.pack(fill="x", pady=(4, 8), before=image)
         self.play_button = ttk.Button(actions, style="Primary.TButton", command=self.next_game_step)
         self.play_button.pack(side="left")
@@ -354,6 +388,7 @@ class PlayerWindow:
         self.cabinet_status.pack(anchor="w")
         ttk.Label(detail, textvariable=self.launch_text, style="CabinetText.TLabel",
                   wraplength=630, justify="left").pack(anchor="w")
+        self.build_activity(detail)
         ttk.Label(self.cockpit, text="Up / Down or Shift keys to browse  ·  Enter to select  ·  Esc to exit",
                   style="Hint.TLabel").pack(anchor="w", pady=(20, 0))
         self.cabinet_list.bind("<Return>", lambda _: self.cabinet_play.invoke())
@@ -427,8 +462,12 @@ class PlayerWindow:
             status = ttk.Label(checklist, text="Checking…")
             status.grid(row=row, column=1, sticky="e", pady=(6, 0))
             detail = ttk.Label(checklist, wraplength=680, justify="left")
-            detail.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(2, 4))
-            self.labels[key] = status, detail
+            detail.grid(row=row + 1, column=0, sticky="w", pady=(2, 4))
+            fix = ttk.Button(checklist, text="Click to fix", style="Fix.TButton",
+                             command=lambda item=key: self.fix_setup_item(item))
+            fix.grid(row=row + 1, column=1, sticky="ne", padx=(12, 0), pady=(2, 4))
+            fix.grid_remove()
+            self.labels[key] = status, detail, fix
             if index < len(ROWS) - 1:
                 ttk.Separator(checklist).grid(row=row + 2, column=0, columnspan=2, sticky="ew")
         checklist.bind("<Configure>", self.wrap_details)
@@ -459,7 +498,7 @@ class PlayerWindow:
                 ttk.Label(page, text="Stern LCD mode").grid(row=row, column=0, sticky="w", pady=7)
                 self.lcd_mode = tk.StringVar()
                 mode = ttk.Combobox(page, textvariable=self.lcd_mode, state="readonly", width=42,
-                                    values=(LCD_FULLSCREEN_MODE, LCD_WINDOWED_MODE))
+                                    values=(LCD_FULLSCREEN_MODE, LCD_REGION_MODE, LCD_WINDOWED_MODE))
                 mode.grid(row=row, column=1, sticky="w", padx=16)
                 mode.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
                 row += 1
@@ -470,26 +509,38 @@ class PlayerWindow:
             box.grid(row=row, column=1, sticky="w", padx=16)
             box.bind("<<ComboboxSelected>>", lambda _: self.check_layout())
             self.screen_boxes[role] = box
+        self.lcd_region = ttk.Frame(page)
+        self.lcd_region.grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.lcd_pixels = {}
+        for column, (key, label) in enumerate(cabinet.LCD_RECT_FIELDS.items()):
+            ttk.Label(self.lcd_region, text=label).grid(row=0, column=column, sticky="w")
+            value = self.lcd_pixels[key] = tk.StringVar()
+            entry = ttk.Entry(self.lcd_region, textvariable=value, width=9)
+            entry.grid(row=1, column=column, sticky="w", padx=(0, 12), pady=(3, 0))
+            entry.bind("<KeyRelease>", lambda _: self.check_layout())
+        ttk.Label(self.lcd_region, text="Pixels from the selected screen’s top-left corner.",
+                  style="Hint.TLabel").grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
         buttons = ttk.Frame(page)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="w", pady=(16, 8))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=(16, 8))
         for label, action in (("Refresh screens", self.refresh_screens),
                               ("Identify screens", self.identify_screens),
                               ("Single-screen preset", self.single_screen),
+                              ("Import ScreenRes…", self.import_screenres),
                               ("Test layout", self.test_layout)):
             ttk.Button(buttons, text=label, command=action).pack(side="left", padx=(0, 8))
         self.save_cabinet = ttk.Button(page, text="Save display layout", command=self.save_layout)
-        self.save_cabinet.grid(row=7, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.save_cabinet.grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.cabinet_hint = ttk.Label(page, style="Hint.TLabel", wraplength=620, justify="left")
-        self.cabinet_hint.grid(row=8, column=0, columnspan=2, sticky="w")
+        self.cabinet_hint.grid(row=9, column=0, columnspan=2, sticky="w")
         ttk.Label(page, text="Use VPX windowed mode when assigning a playfield screen. "
                   "A backglass needs 64-bit B2S Server and a matching .directb2s file.",
                   style="Hint.TLabel", wraplength=620, justify="left").grid(
-            row=9, column=0, columnspan=2, sticky="w", pady=(12, 0))
+            row=10, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Button(page, text="Get B2S Server", command=lambda: webbrowser.open(
             "https://github.com/vpinball/b2s-backglass/releases")).grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
         profile_tools = ttk.Frame(page)
-        profile_tools.grid(row=11, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        profile_tools.grid(row=12, column=0, columnspan=2, sticky="w", pady=(10, 0))
         active = self.setup.settings.get("display_profile")
         self.profile = tk.StringVar(value=active if active in support.PROFILES else "Desktop")
         ttk.Label(profile_tools, text="Display profile").pack(side="left")
@@ -508,11 +559,18 @@ class PlayerWindow:
                   for role, variable in self.screen_vars.items()}
         if self.lcd_mode.get() == LCD_WINDOWED_MODE:
             layout["lcd"] = cabinet.WINDOWED_LCD
+        elif self.lcd_mode.get() == LCD_REGION_MODE:
+            layout[cabinet.LCD_RECT] = {key: value.get() for key, value in self.lcd_pixels.items()}
         return {role: key for role, key in layout.items() if key}
 
     def set_screen_choices(self, layout):
         windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
-        self.lcd_mode.set(LCD_WINDOWED_MODE if windowed else LCD_FULLSCREEN_MODE)
+        rect = layout.get(cabinet.LCD_RECT)
+        self.lcd_mode.set(LCD_WINDOWED_MODE if windowed else LCD_REGION_MODE if rect is not None
+                          else LCD_FULLSCREEN_MODE)
+        defaults = {"rx": 0, "ry": 0, "w": 1024, "h": 576}
+        for key, value in self.lcd_pixels.items():
+            value.set((rect or {}).get(key, defaults[key]))
         self.screen_choices = {}
         for role, variable in self.screen_vars.items():
             choices = {cabinet.DEFAULTS[role]: ""}
@@ -536,6 +594,11 @@ class PlayerWindow:
     def check_layout(self):
         layout = self.selected_layout()
         windowed = layout.get("lcd") == cabinet.WINDOWED_LCD
+        rect = layout.get(cabinet.LCD_RECT)
+        if rect is None:
+            self.lcd_region.grid_remove()
+        else:
+            self.lcd_region.grid()
         self.screen_boxes["lcd"].configure(state="disabled" if windowed else "readonly")
         try:
             roles = cabinet.resolve(layout, self.screens)
@@ -544,13 +607,15 @@ class PlayerWindow:
         else:
             lcd = roles.get("lcd")
             if lcd:
-                text = f"The Stern LCD will run borderless fullscreen on {cabinet.screen_name(lcd)}."
+                mode = "in a borderless region" if rect is not None else "borderless fullscreen"
+                text = f"The Stern LCD will run {mode} on {cabinet.screen_name(lcd)}."
                 if lcd["primary"] and "playfield" not in roles:
                     text += " It can cover VPX if the playfield is also on that screen."
             elif windowed:
-                text = "The Stern LCD will run in a window."
+                text = "The Stern LCD stays above VPX. Hover over it and use Ctrl+scroll to resize."
             else:
-                text = "No spare screen is available. The Stern LCD will run in a window unless you pick a screen."
+                text = "No spare screen is available. The Stern LCD will stay above VPX in a window. "
+                text += "Hover over it and use Ctrl+scroll to resize."
             if layout.get("backglass") == cabinet.DISABLED_B2S:
                 text += " B2S will stay off on the next launch."
             self.cabinet_hint.configure(text=text)
@@ -582,21 +647,39 @@ class PlayerWindow:
     def single_screen(self):
         self.set_screen_choices({"lcd": cabinet.WINDOWED_LCD})
 
+    def import_screenres(self):
+        path = filedialog.askopenfilename(parent=self.root, title="Choose a ScreenRes file",
+                                          filetypes=[("ScreenRes files", ("*.txt", "*.res")),
+                                                     ("All files", "*")])
+        if not path:
+            return
+        screens = padisplay.monitors()
+        try:
+            imported = cabinet.import_screenres(path, screens)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Import ScreenRes", str(exc), parent=self.root)
+            return
+        self.screens = screens
+        self.set_screen_choices({**self.selected_layout(), **imported})
+
     def identify_screens(self):
         self.refresh_screens()
         self.show_screens([(monitor, cabinet.screen_name(monitor)) for monitor in self.screens])
 
     def test_layout(self):
         self.refresh_screens()
+        layout = self.selected_layout()
         try:
-            roles = cabinet.resolve(self.selected_layout(), self.screens)
+            roles = cabinet.resolve(layout, self.screens)
         except ValueError as exc:
             messagebox.showerror("Test layout", str(exc), parent=self.root)
             return
         primary = self.screens[0]
         preview = []
+        rect = layout.get(cabinet.LCD_RECT)
+        lcd_mode = "borderless region" if rect is not None else "fullscreen"
         for monitor in self.screens:
-            labels = [cabinet.ROLES[role] + (" · fullscreen" if role == "lcd" else "")
+            labels = [cabinet.ROLES[role] + (f" · {lcd_mode}" if role == "lcd" else "")
                       for role, screen in roles.items() if screen == monitor]
             if monitor == primary:
                 for role in ("playfield", "lcd"):
@@ -604,7 +687,8 @@ class PlayerWindow:
                         mode = "Windowed" if role == "lcd" else cabinet.DEFAULTS[role]
                         labels.append(f"{cabinet.ROLES[role]} · {mode}")
             if labels:
-                preview.append((monitor, "\n".join(labels)))
+                bounds = cabinet.lcd_bounds(monitor, rect) if rect is not None and roles["lcd"] == monitor else monitor
+                preview.append((bounds, "\n".join(labels)))
         self.show_screens(preview, full=True)
 
     def dismiss_screens(self, _event=None):
@@ -758,8 +842,10 @@ class PlayerWindow:
         ttk.Button(body, text="Close", command=dialog.destroy).pack(side="right", padx=8)
 
     def wrap_details(self, event):
-        for _, detail in self.labels.values():
-            detail.configure(wraplength=max(240, event.width - 28))
+        status_width = max(max(status.winfo_reqwidth(), fix.winfo_reqwidth() + 12)
+                           for status, _, fix in self.labels.values())
+        for _, detail, _ in self.labels.values():
+            detail.configure(wraplength=max(240, event.width - status_width - 28))
 
     def open_logs(self):
         try:
@@ -798,14 +884,22 @@ class PlayerWindow:
         )
         for button, enabled in states:
             button.state(["!disabled"] if enabled and not self.busy else ["disabled"])
+        restarting = any(check.state == "Restart required" for check in self.checks.values())
+        for key, (_, _, fix) in self.labels.items():
+            enabled = not self.busy and (key == "vpx" or not restarting)
+            fix.state(["!disabled"] if enabled else ["disabled"])
         label, self.game_action, hint = self.game_step()
-        self.play_button.configure(text=label)
-        self.cabinet_play.configure(text=label)
+        missing_file = label in ("Locate image…", "Locate table…")
+        self.play_button.configure(text="Click to fix" if missing_file else label)
+        self.cabinet_play.configure(text="Click to fix" if missing_file else label)
+        placement = "after" if missing_file else "before"
+        self.game_actions.pack_configure(**{placement: self.play_hint})
+        self.cabinet_play.pack_configure(**{placement: self.cabinet_status})
         if label == "Import image…":
             self.image_button.pack_forget()
         else:
             self.image_button.pack(side="left", before=self.folder_button, padx=(0, 8))
-        if label == "Choose table…":
+        if label in ("Choose table…", "Locate table…"):
             self.table_button.pack_forget()
         else:
             self.table_button.pack(side="left", before=self.backglass_button)
@@ -1013,7 +1107,11 @@ class PlayerWindow:
             return
         self.busy = True
         self.summary.configure(text=message)
-        self.progress.start(12)
+        self.summary.pack_forget()
+        self.activity_started = monotonic()
+        for panel, _ in self.activity_widgets:
+            panel.pack(fill="x")
+        self.show_activity(message)
         self.update_buttons()
 
         def worker():
@@ -1032,6 +1130,37 @@ class PlayerWindow:
     def report_cache(self, message):
         self.results.put(("cache", message, None))
 
+    def report_activity(self, message, done=None, total=None):
+        self.results.put(("activity", message, (done, total)))
+
+    def update_activity_detail(self):
+        elapsed = int(monotonic() - self.activity_started)
+        hours, seconds = divmod(elapsed, 3600)
+        minutes, seconds = divmod(seconds, 60)
+        clock = f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
+        text = f"{self.activity_bytes}  ·  Elapsed {clock}" if self.activity_bytes else f"Elapsed {clock}"
+        if text != self.activity_detail.get():
+            self.activity_detail.set(text)
+
+    def show_activity(self, message, done=None, total=None):
+        self.activity_phase.set(message)
+        measured = done is not None and bool(total)
+        percent = min(100, int(done * 100 / total)) if measured else 0
+        self.activity_bytes = ""
+        if measured:
+            scale, unit = (2**30, "GiB") if total >= 2**30 else (2**20, "MiB")
+            self.activity_bytes = f"{done / scale:,.2f} / {total / scale:,.2f} {unit} ({percent}%)"
+        mode = "determinate" if measured else "indeterminate"
+        for _, bar in self.activity_widgets:
+            if str(bar.cget("mode")) != mode:
+                bar.stop()
+                bar.configure(mode=mode, value=0)
+                if not measured:
+                    bar.start(16)
+            if measured:
+                bar.configure(value=percent)
+        self.update_activity_detail()
+
     def report_lighting(self, message):
         self.results.put(("lighting", message, None))
 
@@ -1047,8 +1176,13 @@ class PlayerWindow:
             try:
                 kind, value, extra = self.results.get_nowait()
             except queue.Empty:
+                if not self.playing:
+                    self.update_activity_detail()
                 self.root.after(80, self.finish)
                 return
+            if kind == "activity":
+                self.show_activity(value, *extra)
+                continue
             if kind == "cache":
                 self.cache_notice = value
                 self.show_launch_progress()
@@ -1060,10 +1194,11 @@ class PlayerWindow:
                 self.lighting.show_game(self.game, self.lighting_notice)
                 continue
             if kind == "progress":
-                self.summary.configure(text=" ".join(filter(None, (value, self.lighting_notice)))
-                                       if self.launching else value)
+                self.show_activity(value)
                 if self.launching and value in LAUNCH_STAGES:
                     self.last_stage = value
+                    if value in ("Connecting controller", "Opening VPX"):
+                        self.cache_notice = ""
                     self.show_launch_progress()
                 if extra:
                     self.playing = True
@@ -1071,7 +1206,11 @@ class PlayerWindow:
                     self.root.withdraw()
                 continue
             self.busy = False
-            self.progress.stop()
+            for panel, bar in self.activity_widgets:
+                bar.stop()
+                bar.configure(mode="determinate", value=0)
+                panel.pack_forget()
+            self.summary.pack(fill="x")
             if self.playing:
                 self.playing = False
                 self.root.deiconify()
@@ -1089,19 +1228,24 @@ class PlayerWindow:
             return
 
     def check_again(self):
-        def work():
-            resume = "restart_boot" in self.setup.settings
-            checks = self.setup.checks()
-            return self.run_setup_steps(checks) if resume else checks
+        if "restart_boot" in self.setup.settings:
+            self.repair()
+        else:
+            self.start(self.setup.checks, self.show_checks, "Checking this PC…")
 
-        self.start(work, self.show_checks, "Checking this PC…")
-
-    def show_checks(self, checks):
+    def show_checks(self, checks, *, prompt_vpx=True):
         self.checks = checks
         for key, check in checks.items():
-            status, detail = self.labels[key]
+            status, detail, fix = self.labels[key]
             status.configure(text=check.state)
             detail.configure(text=check.detail)
+            runtime_decision = check.action in RUNTIME_CONFIRMATIONS
+            fix.configure(text="Reinstall runtime" if check.action == REINSTALL_RUNTIME else
+                          "Convert runtime" if runtime_decision else "Click to fix")
+            if runtime_decision or (check.state == "Missing" and (check.action or key == "vpx")):
+                fix.grid()
+            else:
+                fix.grid_remove()
         states = {check.state for check in checks.values()}
         if "Restart required" in states:
             summary = "Restart Windows, then reopen SPIKE 2 VPX to resume setup."
@@ -1118,30 +1262,76 @@ class PlayerWindow:
         self.summary.configure(text=summary)
         self.primary.configure(text="Retry setup" if "Setup failed" in states else
                                "Repair" if "Repair needed" in states else "Set up")
+        if prompt_vpx and not self.vpx_prompted and checks["vpx"].state == "Missing":
+            self.root.after_idle(self.prompt_for_vpx)
+
+    def prompt_for_vpx(self):
+        if self.vpx_prompted or self.busy or self.checks["vpx"].state != "Missing":
+            return
+        if all(check.state != "Restart required" for check in self.checks.values()):
+            self.choose_vpx()
 
     @staticmethod
     def next_step(checks):
         if any(check.state == "Restart required" for check in checks.values()):
             return None
-        for key, check in checks.items():
-            if check.state == "Setup failed" and check.action:
+        steps = {key: check for key, check in checks.items()
+                 if check.action and check.action not in RUNTIME_CONFIRMATIONS}
+        for key, check in steps.items():
+            if check.state == "Setup failed":
                 return key, check.action
-        return next(((key, check.action) for key, check in checks.items() if check.action), None)
+        return next(((key, check.action) for key, check in steps.items()), None)
 
     def run_setup_steps(self, checks):
         while (step := self.next_step(checks)):
             key, action = step
-            self.report(f"Setting up {ROWS[key]}… Windows may ask for administrator permission.", False)
-            checks = self.setup.repair(key, action)
+            checks = self.setup.repair(key, action, progress=self.report_activity)
             if checks[key].state == "Setup failed":
                 break
         return checks
 
     def repair(self):
-        self.start(lambda: self.run_setup_steps(self.setup.checks()), self.show_checks,
+        self.start(lambda: self.run_setup_steps(self.setup.checks()), self.setup_finished,
                    "Setting up this PC… Windows may ask for administrator permission.")
 
+    def setup_finished(self, checks):
+        self.show_checks(checks, prompt_vpx=False)
+        runtime = checks["runtime"]
+        if (runtime.state == "Repair needed" and runtime.action in RUNTIME_CONFIRMATIONS
+                and all(check.state != "Restart required" for check in checks.values())):
+            self.fix_setup_item("runtime")
+        self.prompt_for_vpx()
+
+    def fix_setup_item(self, key):
+        check = self.checks[key]
+        if key == "vpx":
+            self.choose_vpx()
+        elif check.action == REINSTALL_RUNTIME:
+            if messagebox.askyesno(
+                "Reinstall the SPIKE 2 runtime",
+                f"WSL cannot find the runtime disk at:\n{check.missing_disk}\n\n"
+                "If it was moved or you have a backup, restore it first and select Check again.\n\n"
+                "Reinstalling removes the old SPIKE2-VPX WSL distribution and any data inside it, "
+                "including its internal cache, and creates a fresh runtime in the configured folder. "
+                "Your Windows SD-card images and Windows cache folder are kept.\n\n"
+                "Reinstall the runtime?",
+                default=messagebox.NO, icon=messagebox.WARNING, parent=self.root,
+            ):
+                self.start(lambda: self.setup.repair(key, check.action, progress=self.report_activity,
+                                                     missing_disk=check.missing_disk),
+                           self.show_checks, "Reinstalling the SPIKE 2 runtime…")
+        elif check.action:
+            if check.action == "convert_runtime" and not messagebox.askyesno(
+                "Convert the SPIKE 2 runtime to WSL 2",
+                "Back up the runtime data before converting. Is your backup ready?",
+                default=messagebox.NO, icon=messagebox.WARNING, parent=self.root,
+            ):
+                return
+            self.start(lambda: self.setup.repair(key, check.action, progress=self.report_activity),
+                       self.show_checks, f"Setting up {ROWS[key]}…")
+
     def choose_vpx(self):
+        self.vpx_prompted = True
         exe = filedialog.askopenfilename(parent=self.root, title="Choose Visual Pinball X",
                                          filetypes=[("Visual Pinball X", "VPinballX64.exe"),
                                                     ("Executables", "*.exe")])
@@ -1219,21 +1409,20 @@ class PlayerWindow:
 
     def load_image(self, path, expected=None):
         def work():
-            image, note = self.player.prepare_image(path, expected)
-            if expected and expected in self.saved:
-                image = self.player.relink_image(expected, image)
-            elif not any(game.title == image.title and game.image == image.image for game in self.saved):
-                self.player.save(image)
-            return image, note
+            image, note = self.player.prepare_image(path, expected, progress=self.report_activity)
+            self.report_activity("Saving the game to the library…")
+            image, removed_version = self.player.install_image(image, expected)
+            return image, note, removed_version
 
         def done(result):
-            image, self.cache_note = result
-            saved = next((row for row in self.player.library() if row.title == image.title and
-                          Path(row.image) == Path(image.image)), None)
-            self.reload_library(saved or image)
-            self.summary.configure(text=f"{image.name} · image verified.")
+            image, self.cache_note, removed_version = result
+            self.reload_library(image)
+            summary = f"{image.name} · image verified."
+            if removed_version:
+                summary += f" Removed the older {removed_version} import."
+            self.summary.configure(text=summary)
 
-        message = "Extracting and inspecting the SD-card image…" if Path(path).suffix.casefold() == ".zip" else (
+        message = "Opening the ZIP archive…" if Path(path).suffix.casefold() == ".zip" else (
             "Inspecting the SD-card image…")
         self.start(work, done, message)
 
@@ -1297,7 +1486,7 @@ class PlayerWindow:
             self.reload_library(self.game)
 
         self.start(lambda: self.player.play(game, self.report, lighting_update=self.report_lighting,
-                                            cache_update=self.report_cache),
+                                            cache_update=self.report_cache, activity=self.report_activity),
                    done, f"Starting {game.name}…", failed)
 
     def recover_session(self):
@@ -1383,7 +1572,7 @@ def main():
             except OSError:
                 messagebox.showinfo("SPIKE 2 VPX", "SPIKE 2 VPX is already open.", parent=root)
                 return
-            PlayerWindow(root, setup)
+            PlayerWindow(root, setup, auto_setup="--setup" in sys.argv[1:])
             root.deiconify()
             root.mainloop()
     except OSError as exc:

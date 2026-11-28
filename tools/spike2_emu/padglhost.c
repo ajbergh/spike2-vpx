@@ -2781,7 +2781,7 @@ extern int XQueryTree(XDisplay *, unsigned long, unsigned long *, unsigned long 
                       unsigned long **, unsigned int *);
 extern int XFree(void *);
 
-struct disp_set { int set, x, y, w, h, fs, border, rx, ry; };
+struct disp_set { int set, x, y, w, h, fs, border, rx, ry, region; };
 static struct disp_set disp_want;
 static int disp_placed;                  /* the wanted setting is applied     */
 static int disp_cur_border = 1;          /* what the window HAS now           */
@@ -2800,7 +2800,7 @@ static const char *disp_path(void)
  * newer writer's extra fields cannot break an older renderer. */
 static struct disp_set disp_read(void)
 {
-    struct disp_set d = { 0, 0, 0, 0, 0, 0, 1, 0, 0 };
+    struct disp_set d = { .border = 1 };
     const char *p = disp_path();
     char line[512];
     FILE *f;
@@ -2823,6 +2823,7 @@ static struct disp_set disp_read(void)
             else if (!strcmp(tok, "border")) d.border = v != 0;
             else if (!strcmp(tok, "rx")) d.rx = v;
             else if (!strcmp(tok, "ry")) d.ry = v;
+            else if (!strcmp(tok, "mode")) d.region = !strcmp(eq + 1, "region");
         }
         break;
     }
@@ -2876,10 +2877,10 @@ static void disp_set_border(int border)
 
 /* WSLg can place X fullscreen on the primary display even after a move.
  * The Windows VPX launcher owns geometry on an assigned cabinet monitor. */
-static int disp_windows_fullscreen(struct disp_set d)
+static int disp_windows_placement(struct disp_set d)
 {
     const char *host = getenv("PAD_WINDOWS_LCD");
-    return d.fs && host && strcmp(host, "1") == 0;
+    return (d.fs || d.region) && host && strcmp(host, "1") == 0;
 }
 
 /* WSLg sends the X parent surface, including its shadow, to the Windows
@@ -2933,13 +2934,13 @@ static void disp_apply(void)
         XFlush(xdpy);
         fprintf(stderr, "[padglhost] display: free (no setting)\n");
     } else {
-        if (disp_windows_fullscreen(d)) {
+        if (disp_windows_placement(d)) {
             if (disp_cur_fs) { disp_fullscreen(xwin, 0); disp_cur_fs = 0; }
             disp_set_border(0);
             XFlush(xdpy);
             disp_fixups = 0;
             disp_placed = 1;
-            fprintf(stderr, "[padglhost] display: Windows cabinet fullscreen\n");
+            fprintf(stderr, "[padglhost] display: Windows cabinet placement\n");
             return;
         }
         int left_fs = disp_cur_fs && !d.fs;
@@ -2971,7 +2972,7 @@ static void disp_open(unsigned long w)
     disp_want = disp_read();
     if (p && stat(p, &st) == 0) disp_mtim = st.st_mtim;
     if (!disp_want.set) return;
-    disp_cur_border = disp_windows_fullscreen(disp_want) ? 0 : disp_want.border;
+    disp_cur_border = disp_windows_placement(disp_want) ? 0 : disp_want.border;
     disp_border(w, disp_cur_border);
     disp_placed = 0;             /* placement still owed: disp_poll does it */
     game_want_pos = 0;           /* the setting, not the remembered spot */
@@ -3007,7 +3008,7 @@ static void disp_press(int x, int y, int xr, int yr, unsigned long t);
 
 static void disp_button(int x, int y, int xr, int yr)
 {
-    if (disp_windows_fullscreen(disp_want)) return;
+    if (disp_want.region || disp_windows_placement(disp_want)) return;
     double t = now_s();
     if (t - disp_last_click_s < DISP_DCLICK_S &&
         abs(xr - disp_last_click_xr) < 8 && abs(yr - disp_last_click_yr) < 8) {
@@ -3094,6 +3095,29 @@ static void disp_press(int x, int y, int xr, int yr, unsigned long t)
     disp_fixups = 0;                     /* the user's place, not ours */
 }
 
+/* Ctrl+wheel resizes the LCD from anywhere in the picture, keeping its aspect. */
+static void disp_zoom(int grow)
+{
+    if (disp_cur_fs || disp_want.region || disp_windows_placement(disp_want) || fb_w <= 0 || fb_h <= 0) return;
+    int screen = XDefaultScreen(xdpy);
+    int max_w = XDisplayWidth(xdpy, screen);
+    int height_limit = (int)((long)XDisplayHeight(xdpy, screen) * fb_w / fb_h);
+    if (max_w > height_limit) max_w = height_limit;
+    if (max_w <= 0) return;
+    int min_w = max_w < 240 ? max_w : 240;
+    int change = win_w / 8;
+    int width = grow ? win_w + change : win_w - change;
+    if (width < min_w) width = min_w;
+    if (width > max_w) width = max_w;
+    int height = (int)((long)width * fb_h / fb_w);
+    if (height < 1) height = 1;
+    XResizeWindow(xdpy, xwin, (unsigned)width, (unsigned)height);
+    XFlush(xdpy);
+    disp_dragged = disp_want.set;
+    disp_cfg_s = now_s();
+    disp_fixups = 0;
+}
+
 /* The game line again with this place and size: x y w h, and rx ry moved by
  * as much (the monitor's corner is x - rx). Every other line is kept. */
 static void disp_writeback(void)
@@ -3160,7 +3184,7 @@ static void disp_poll(void)
         }
         if (changed) disp_want = disp_read();
         if (changed || (!disp_placed && disp_want.set)) disp_apply();
-        if (disp_windows_fullscreen(disp_want)) disp_report_frame();
+        if (disp_windows_placement(disp_want)) disp_report_frame();
     }
     /* a rectangle: read back, shift the aim by the miss (see the restore) */
     if (disp_fixups > 0 && t >= disp_fix_s) {
@@ -3436,9 +3460,13 @@ static void win_pump(void)
             save_pending = 1;
             break;
         case 4:                        /* ButtonPress: x y x_root y_root at
-                                          ints 16-19, button at 21, time ul[7] */
-            if (ev.ul[4] == xwin && ev.i[21] == 1)
-                disp_button(ev.i[16], ev.i[17], ev.i[18], ev.i[19]);
+                                          ints 16-19, state at 20, button at 21 */
+            if (ev.ul[4] == xwin) {
+                if (ev.i[21] == 1)
+                    disp_button(ev.i[16], ev.i[17], ev.i[18], ev.i[19]);
+                else if ((ev.i[20] & (1 << 2)) && (ev.i[21] == 4 || ev.i[21] == 5))
+                    disp_zoom(ev.i[21] == 4);  /* ControlMask, wheel up or down */
+            }
             break;
         case 5:                        /* ButtonRelease */
             if (ev.ul[4] == xwin && ev.i[21] == 1) disp_down = 0;

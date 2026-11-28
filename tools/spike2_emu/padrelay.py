@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""padrelay.py <fifo> <port> [ctl] - hand the guest's PCM to a socket. That is all.
+"""padrelay.py <fifo> <port> [ctl] [channels] - relay the guest's PCM to a socket.
 
 THE POINT OF THIS FILE IS EVERYTHING IT DOES NOT DO. Its predecessor,
 audiotcp.py, filled silence against wall time, trimmed what it judged to be
@@ -14,11 +14,15 @@ TCP does not lose bytes and the sound card is the only clock with a vote, so a
 relay has nothing to decide. It copies. padplay.py holds the cushion, because
 that is where the device is.
 
+When channels are specified, the Windows player's liveness check receives a
+single silent frame per idle interval. The guest can legitimately stop writing
+PCM during silence or pause, and the speaker still owns the playback clock.
+
 Measured end to end against the source, same file and capture rig throughout:
 audiotcp.py + ffplay scored +16 dB of damage; this + padplay.py scores -14.8 dB,
 level with Windows playing the file directly.
 
-THE ONE EXCEPTION IS THE VOLUME, AND ONLY ON A MAC (PAD-957). There the far end
+VOLUME ON A MAC (PAD-957). There the far end
 is ffplay, which has no way to be told a new level while it plays, so the
 Emulate tab's Volume and Mute did nothing at all. On a Mac the box's
 playaudio.sh hands this a third argument, the volume file padbox.sh keeps in
@@ -38,6 +42,7 @@ loudest sample, after the volume.
 import json
 import math
 import os
+import select
 import socket
 import stat
 import sys
@@ -149,6 +154,19 @@ class Meter:
 
 #: how long --pipe waits for playaudio.sh to make the FIFO
 PIPE_WAIT_S = 60.0
+TCP_HEARTBEAT_S = 5.0
+
+
+def read_tcp_audio(fd, conn, count, frame_bytes, forwarded):
+    """Wait for PCM or a disconnect, sending a silent frame only at a frame boundary."""
+    while True:
+        ready, _, _ = select.select([fd, conn], [], [], TCP_HEARTBEAT_S)
+        if conn in ready:
+            return b""  # The player never writes to this one-way stream.
+        if fd in ready:
+            return os.read(fd, count)
+        if forwarded % frame_bytes == 0:
+            conn.sendall(bytes(frame_bytes))
 
 
 def pump(read, write, vol, say, meter=None):
@@ -393,12 +411,13 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--pipe":
         raise SystemExit(pipe_main(sys.argv[2:]))
     if len(sys.argv) < 3:
-        print("usage: padrelay.py <fifo> <port> [ctl] | --pipe <fifo> [ctl]"
+        print("usage: padrelay.py <fifo> <port> [ctl] [channels] | --pipe <fifo> [ctl]"
               " | --pace <rate> <ch>", file=sys.stderr)
         raise SystemExit(2)
     fifo, port = sys.argv[1], int(sys.argv[2])
     vol = Volume(sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None)
     vol.poll()
+    frame_bytes = 2 * int(sys.argv[4]) if len(sys.argv) > 4 else 0
 
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -420,20 +439,23 @@ def main():
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("[padrelay] player connected from %s" % (addr,), flush=True)
 
-        # OPENED ONLY NOW, and that ordering is load-bearing. Opening a FIFO for
-        # read blocks until a writer exists, so an ffmpeg told to read the FIFO and
-        # listen on a socket would sit on the empty FIFO and never open the socket
-        # at all - the player would find nothing to connect to and the run was
-        # silent. Listen first, open second.
-        fd = os.open(fifo, os.O_RDONLY)
+        # Listen first so the player can attach while the guest is quiet. The
+        # heartbeat path opens nonblocking so it can also signal liveness
+        # before the guest first opens the FIFO.
+        flags = os.O_RDONLY | (os.O_NONBLOCK if frame_bytes else 0)
+        fd = os.open(fifo, flags)
         total = [0]
 
         def send(b, conn=conn):
             conn.sendall(b)
             total[0] += len(b)
         try:
-            pump(lambda n: os.read(fd, n), send, vol,
-                 lambda s: print(s, flush=True))
+            def read(n):
+                if frame_bytes:
+                    return read_tcp_audio(fd, conn, n, frame_bytes, total[0])
+                return os.read(fd, n)
+
+            pump(read, send, vol, lambda s: print(s, flush=True))
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             print("[padrelay] player went away: %s" % exc, flush=True)
         finally:

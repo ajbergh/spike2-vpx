@@ -1,15 +1,21 @@
 from pathlib import Path
+import runpy
 from subprocess import CompletedProcess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import spike2_vpx_setup as setup
 
 
 def result(code=0, output=b""):
     return CompletedProcess([], code, output, b"")
+
+
+def mount_error(disk, code="MountDisk/ERROR_PATH_NOT_FOUND"):
+    return result(1, (f"Failed to attach disk '{disk}' to WSL2.\n"
+                      f"Error code: Wsl/Service/CreateInstance/{code}").encode("utf-16-le"))
 
 
 class StandaloneSetupTest(unittest.TestCase):
@@ -72,6 +78,13 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertEqual(self.app.check_wslg(setup.Check("Ready", "")).state, "Ready")
         self.assertIn("PULSE_SERVER", wsl.call_args.args[-1])
 
+    def test_wslg_detects_localized_version_output(self):
+        text = "Version WSL : 3.0.5.0\r\nVersion du noyau : 6.18.58.1-1\r\nVersion WSLg\xa0:\xa01.0.79\r\n"
+        with patch.object(setup, "run", return_value=result(output=text.encode("utf-16-le"))):
+            check = self.app.check_wslg(setup.Check("Missing", ""))
+        self.assertEqual(check.state, "Detected")
+        self.assertIn("WSLg 1.0.79", check.detail)
+
     def test_runtime_only_accepts_its_own_full_wsl2_distro(self):
         with patch.object(setup, "distro_registration", return_value=(Path("another"), 2)), \
                 patch.object(self.app, "wsl") as wsl:
@@ -88,6 +101,90 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertEqual(self.app.check_runtime().state, "Ready")
         self.assertEqual(wsl.call_args.args[-1], "/mnt/c/Program Files")
         arm.assert_called_once_with("/mnt/c/Program Files", "check")
+
+    def test_missing_runtime_disk_offers_reinstall_only_for_an_empty_owned_folder(self):
+        base = self.app.runtime_dir
+        disk = base / "ext4.vhdx"
+        with patch.object(setup, "distro_registration", return_value=(base, 2)), \
+                patch.object(self.app, "wsl", return_value=mount_error(disk)) as wsl:
+            check = self.app.check_runtime()
+            self.assertEqual((check.state, check.action, check.missing_disk),
+                             ("Repair needed", setup.REINSTALL_RUNTIME, disk))
+            base.mkdir()
+            self.assertEqual(self.app.check_runtime().action, setup.REINSTALL_RUNTIME)
+            disk.touch()
+            check = self.app.check_runtime()
+            self.assertEqual((check.state, check.action), ("Needs attention", ""))
+            disk.unlink()
+            wsl.return_value = mount_error(disk, "CreateVm/HCS/ERROR_PATH_NOT_FOUND")
+            check = self.app.probe("runtime", self.app.check_runtime)
+            self.assertEqual((check.state, check.action), ("Check failed", ""))
+            wsl.return_value = mount_error(disk.with_name("system.vhdx"))
+            self.assertEqual(self.app.probe("runtime", self.app.check_runtime).action, "")
+
+    def test_runtime_reinstall_verifies_archive_before_unregister_and_uses_selected_folder(self):
+        base = self.app.data / "runtime"
+        disk = base / "ext4.vhdx"
+        selected = self.app.data / "new runtime"
+        operations = Mock()
+        operations.verify.return_value = (True, "")
+        operations.unregister.return_value = result()
+        with patch.object(setup.storage, "installed_folder", return_value=selected), \
+                patch.object(setup, "distro_registration", side_effect=[(base, 2), (base, 2), None]), \
+                patch.object(self.app, "wsl", return_value=mount_error(disk, "MountVhd/HCS/ERROR_FILE_NOT_FOUND")), \
+                patch.object(setup.payloads, "verify", operations.verify), \
+                patch.object(setup.runtime, "_need_room"), \
+                patch.object(setup, "run", operations.unregister), \
+                patch.object(setup.runtime, "import_image", operations.import_image):
+            self.app.reinstall_runtime(disk, None)
+        self.assertEqual([call[0] for call in operations.mock_calls], ["verify", "unregister", "import_image"])
+        operations.unregister.assert_called_once_with(["wsl.exe", "--unregister", setup.DISTRO], timeout=120)
+        self.assertEqual(operations.import_image.call_args.args[1], str(selected.resolve()))
+        self.assertEqual(self.app.settings["runtime_dir"], str(selected.resolve()))
+
+    def test_runtime_reinstall_keeps_registration_if_download_fails_or_disk_returns(self):
+        base = self.app.runtime_dir
+        disk = base / "ext4.vhdx"
+
+        def restored_disk(progress):
+            base.mkdir()
+            disk.touch()
+            return self.app.data / "download.tar"
+
+        with patch.object(setup, "distro_registration", return_value=(base, 2)), \
+                patch.object(self.app, "wsl", return_value=mount_error(disk)), \
+                patch.object(setup, "run") as run:
+            with patch.object(self.app, "runtime_archive", side_effect=RuntimeError("Download failed")):
+                with self.assertRaisesRegex(RuntimeError, "Download failed"):
+                    self.app.reinstall_runtime(disk, None)
+            with patch.object(self.app, "runtime_archive", side_effect=restored_disk):
+                with self.assertRaisesRegex(RuntimeError, "needs an empty folder"):
+                    self.app.reinstall_runtime(disk, None)
+            run.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows desktop setup")
+    def test_desktop_setup_runs_automatic_steps_and_requires_runtime_confirmation(self):
+        desktop = runpy.run_path(str(setup.APP / "Spike2Vpx.pyw"))
+        player = desktop["PlayerWindow"]
+        disk = self.app.runtime_dir / "ext4.vhdx"
+        checks = {"runtime": setup.Check("Repair needed", "", setup.REINSTALL_RUNTIME, disk),
+                  "controller": setup.Check("Missing", "", "register_controller")}
+        self.assertEqual(player.next_step(checks), ("controller", "register_controller"))
+        checks["controller"] = setup.Check("Ready", "")
+        self.assertIsNone(player.next_step(checks))
+        window = Mock(checks=checks)
+        player.setup_finished(window, checks)
+        window.fix_setup_item.assert_called_once_with("runtime")
+
+        with patch.object(desktop["messagebox"], "askyesno", side_effect=[False, True]) as confirm:
+            player.fix_setup_item(window, "runtime")
+            window.start.assert_not_called()
+            player.fix_setup_item(window, "runtime")
+        self.assertEqual(confirm.call_args.kwargs["default"], desktop["messagebox"].NO)
+        window.start.assert_called_once()
+        window.start.call_args.args[0]()
+        window.setup.repair.assert_called_once_with("runtime", setup.REINSTALL_RUNTIME,
+                                                    progress=window.report_activity, missing_disk=disk)
 
     def test_runtime_converts_only_its_own_wsl1_distribution_as_the_player(self):
         with patch.object(setup, "distro_registration", return_value=(Path("another"), 1)), \
@@ -123,6 +220,28 @@ class StandaloneSetupTest(unittest.TestCase):
         self.assertEqual(Path(target), self.app.runtime_dir.resolve())
         self.assertEqual(Path(archive).parent, self.app.data / "downloads")
 
+    def test_runtime_install_reports_download_verification_and_import(self):
+        events = []
+
+        def download(image, destination, *, log, progress, verifying):
+            progress(image.size, image.size)
+            verifying()
+
+        with patch.object(setup, "distro_registration", return_value=None), \
+                patch.object(setup.payloads, "verify", return_value=(False, "missing")), \
+                patch.object(setup.runtime, "_need_room"), patch.object(setup.runtime, "import_image"), \
+                patch.object(setup.payloads, "download", side_effect=download):
+            self.app.install_runtime(lambda *event: events.append(event))
+
+        size = setup.runtime.IMAGE.size
+        self.assertEqual(events, [
+            ("Checking for a verified SPIKE 2 runtime download…",),
+            ("Downloading the SPIKE 2 runtime…", 0, size),
+            ("Downloading the SPIKE 2 runtime…", size, size),
+            ("Verifying the runtime download…",),
+            ("Installing the SPIKE 2 runtime in WSL…",),
+        ])
+
     @unittest.skipUnless(sys.platform == "win32", "Windows installer paths")
     def test_installer_runtime_folder_is_used_for_import_and_remembered(self):
         install = self.app.data / "App"
@@ -143,13 +262,22 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertTrue(reopened.owns_runtime(selected))
             self.assertFalse(reopened.owns_runtime(self.app.data / "runtime"))
 
-    def test_vpx_does_not_read_the_inherited_kit_and_saves_browse_selection(self):
-        with patch.object(setup.vpxsetup, "find_vpx", return_value="") as find:
-            self.assertEqual(self.app.check_vpx().state, "Missing")
-        find.assert_called_once_with(use_kit=False)
+    def test_vpx_checks_the_default_folder_and_prefers_a_saved_selection(self):
+        default = self.app.data / "VisualPinbal" / "VPinballX64.exe"
         path = self.app.data / "VPinballX64.exe"
-        path.touch()
-        self.app.choose_vpx(path)
+        with patch.object(setup, "VPX_DEFAULT_EXE", default), \
+                patch.object(setup.vpxsetup, "vpx_version", return_value=(10, 8, 0)):
+            self.assertEqual(self.app.check_vpx().state, "Missing")
+            default.parent.mkdir()
+            default.touch()
+            self.assertEqual(self.app.vpx_executable(), default)
+            self.assertEqual(self.app.check_vpx().state, "Ready")
+            path.touch()
+            self.app.choose_vpx(path)
+            self.assertEqual(self.app.vpx_executable(), path.resolve())
+            path.unlink()
+            self.assertEqual(self.app.vpx_executable(), default)
+            path.touch()
         with patch.object(setup.vpxsetup, "vpx_version", side_effect=[(10, 7, 4), (10, 8, 0)]):
             self.assertEqual(self.app.check_vpx().state, "Needs attention")
             self.assertEqual(self.app.check_vpx().state, "Ready")

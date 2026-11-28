@@ -29,7 +29,7 @@ VPX table.
 [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
 by **David Vanderburgh**, extended with a Windows launcher, WSL 2 setup, VPX
 table integration, cabinet display management, and expression lighting support.
-All credit to David Vanderburgh for the underlying decryption and SPIKE 2
+All credit to David Vanderburgh for the underlying SPIKE 2
 emulation foundation.
 
 No Stern or game code is shipped in this repo.
@@ -54,10 +54,18 @@ checkout with x64 Python and Tcl/Tk. For a checkout, install the bundled
 Python dependencies with `python -m pip install -r requirements-windows.txt`.
 
 **WSL 2 (Windows Subsystem for Linux) and hardware virtualization are required.**
-In the app, select **Set up** and approve the Windows administrator prompt.
-Setup enables Virtual Machine Platform, installs or updates WSL as needed, and
-imports the app's private `SPIKE2-VPX` distribution. If Windows requests a
-restart, restart and reopen the app to continue setup.
+When the installer opens the app, setup starts automatically. Approve the
+Windows administrator prompts so setup can enable Virtual Machine Platform,
+install or update WSL, and register the controller as needed. Setup also imports
+the app's private `SPIKE2-VPX` distribution when needed. If Windows requests a
+restart, restart and reopen the app to continue setup. You can also run setup
+from the app's **Setup** tab.
+
+If WSL still has the `SPIKE2-VPX` registration but its `ext4.vhdx` disk is
+missing, setup offers **Reinstall runtime**. Restore the disk first if you have
+a backup. Reinstalling requires your approval and replaces the WSL distribution
+and any data inside it, including its internal cache. Your Windows SD-card
+images and Windows cache folder are kept.
 
 If setup reports a virtualization problem, open **Task Manager → Performance →
 CPU** and check **Virtualization**. If disabled, consult your PC manufacturer's
@@ -68,19 +76,26 @@ nested virtualization enabled on its host.
 [Microsoft's guide to enabling virtualization](https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows)
 
 The checklist also covers WSLg display and audio, Visual Pinball X 10.8+ x64,
-and the controller. **Get VPX** opens the VPX download page. After installing
-VPX, use **Choose VPX** if the app needs help locating `VPinballX64.exe`.
+and the controller. The app checks `C:\vPinball\VisualPinbal\VPinballX64.exe`
+by default and prompts you to choose the executable if it cannot find it.
+**Get VPX** opens the VPX download page.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
 The Windows installer's **SPIKE 2 storage** page lets you choose separate
-drive letters and folders for a new WSL emulator runtime and for first-load
-SD-card copies. Use an empty folder for a new runtime. A custom cache goes
-in a `SPIKE2-VPX-cardcache` subfolder on a Windows drive that WSL can access.
-Leave both fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime` and the
-WSL cache. The default WSL cache generally offers faster reads than a
-Windows folder. An already registered app runtime stays in place when you
-rerun the installer. Installer choices affect future cache writes. Runtime
-downloads and ZIP imports use the app's data folder.
+folders for a new WSL emulator runtime and for the SD-card cache. Use an empty
+folder for a new runtime. An already registered runtime stays in place when
+you rerun the installer.
+
+A custom cache stores first-load SD-card copies under
+`SPIKE2-VPX-cardcache` and compact ZIP imports under
+`SPIKE2-VPX-cardcache\imports`. The selected drive must be accessible to WSL
+for playback. A new selection applies to future cache writes. Setup
+remembers previous Windows cache folders for uninstall.
+
+Leave the storage fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime`
+for a new runtime and WSL storage for card imports and first-load copies.
+Windows settings, app logs, and the runtime download archive are stored
+under `%LOCALAPPDATA%\Spike2Vpx`.
 
 Setup verifies that WSL can execute an ARM program inside a chroot. It
 repairs a missing ARM handler in the app's distro, and the launcher checks
@@ -100,9 +115,24 @@ python tools/spike2_emu/vpx/padvpx.py patch "C:\Tables\Godzilla limited edition.
 
 Browse **Supported Tables** to find the table version for your game and open
 its download page where one is listed. In **Games**, **Get image from Stern**
-opens Stern's download page. Use **Import image** with a local `.raw` or a ZIP
-containing one `.raw`, or select a folder of raw images. The app reads the
-title and edition from the image and checks space for the optional cache.
+opens Stern's download page. Select the `.zip` you downloaded from Stern
+directly in **Import image**. The app extracts the SD-card image for you, so
+you can skip unzipping the download. The ZIP must contain one `.raw` image.
+**Import image** also accepts an already extracted `.raw` file. You can select
+a ZIP on an SMB share using a UNC path or mapped drive. With **Cache images on
+first load** enabled, ZIP import saves one sparse `.raw` named for the game, such
+as `foo_fighters_pro-<id>.raw`. It goes in `SPIKE2-VPX-cardcache\imports` under
+the cache folder selected in the installer. When that folder is blank, the app
+stores the image inside the local WSL runtime. The game starts from that
+image even when the share is disconnected. With caching disabled, ZIP import extracts a
+RAW into the app's Windows data folder. Importing the same unchanged ZIP from
+the same location reuses its verified local image while that copy is available.
+When a newer compact import matches a single saved game, it upgrades that
+pairing and removes the older app-managed image if it is unused. Separately
+saved versions can coexist. Any exported launch script that points to a
+retired image needs to be exported again.
+You can also select a folder of raw
+images to add multiple local cards.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
 existing prepared table. The app saves new conversions and their companion
 files beside the original table. Prepared pairings appear in the game library.
@@ -140,7 +170,7 @@ separately at startup. [Device-table lighting survey](tools/spike2_emu/cablights
 | Batman ’66 | Batman ’66 (`batman`) | [Batman 66 1.1.0](https://vpuniverse.com/files/file/6868-batman-66-stern-tribute/) | Unverified |
 | The Beatles | The Beatles (`beatles`) | [The Beatles (Original 2018) v007](https://orbitalpin.com/downloads/) | Unverified |
 | Black Knight: Sword of Rage | LE | [Black Knight Sword Of Rage LE](https://vpuniverse.com/files/file/32118-black-knight-sword-of-rage-stern-2019/) | Unverified |
-| Deadpool | Pro | [JP’s Deadpool 6.10](https://www.vpforums.org/index.php?app=downloads&showfile=15967) | Topper |
+| Deadpool | Pro | [JP’s Deadpool 7.0.0 or 6.1.0](https://www.vpforums.org/index.php?app=downloads&showfile=15967) | Topper |
 | Foo Fighters | Pro, LE | [JP’s Foo Fighters 0.5.0](https://www.vpforums.org/index.php?app=downloads&showfile=19519) | Speakers |
 | Godzilla | LE | [Godzilla Limited Edition v2.6](https://vpuniverse.com/files/file/8449-godzilla-limited-edition/) | Topper |
 | Guardians of the Galaxy | Pro, LE | [Guardians of the Galaxy 2.1.1](https://vpuniverse.com/files/file/6127-guardians-of-the-galaxy/) | Unverified |
@@ -198,15 +228,30 @@ Open **Cabinet** and select **Identify screens**. Assign the VPX playfield,
 B2S backglass, and Stern LCD to separate screens, or start with the
 **Single-screen preset**. Select **Test layout** to preview the assignments
 before saving. Use VPX windowed mode for app-managed playfield placement.
-Under **Stern LCD mode**, choose **Borderless fullscreen** or **Windowed**,
-then select **Save display layout**. Borderless fullscreen uses the screen
-selected under **Stern LCD screen**. The **Automatic (spare screen)** default
-uses a spare secondary screen when available and opens a window otherwise.
-Windows places the fullscreen LCD using the same display coordinates as
-**Identify screens**.
+Under **Stern LCD mode**, choose **Borderless fullscreen**, **Borderless
+region**, or **Windowed**, then select **Save display layout**.
+Borderless fullscreen fills the screen selected under **Stern LCD screen**.
+The **Automatic (spare screen)** default uses a spare secondary screen when
+available and opens a window otherwise.
+
+For a DMD cutout, choose **Borderless region** and select the DMD monitor.
+Enter the width and height in pixels and the X and Y offsets from the top-left
+of that monitor. For a centered 1024 × 576 cutout on a 1024 × 768 display, set
+X to 0 and Y to 96. **Test layout** previews the region before you save it.
+
+If B2S already has your DMD coordinates, choose **Import ScreenRes…** in
+**Cabinet** and open `ScreenRes.txt` or a table's `.res` file. The import
+uses the file's backglass placement to find the DMD monitor and fill the
+Stern LCD region. Review it with **Test layout**, then select
+**Save display layout**.
+
 When the cabinet and Windows display numbers differ, Cabinet shows both.
-The renderer starts at the selected screen's size for fullscreen play.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.
+Hover over the LCD and use **Ctrl+scroll** to resize it, or drag its window
+border. When SPIKE 2 VPX starts a game with a windowed LCD, it keeps the LCD
+above the playfield and disables exclusive fullscreen for that VPX session.
+For a screen-filling playfield on one monitor, use VPX's borderless windowed
+mode at your desktop resolution.
 
 A managed backglass needs 64-bit B2S Server and a matching `.directb2s`
 file. The app carries over a matching file when it patches a table. Use
@@ -275,7 +320,19 @@ Run `.\scripts\build-windows-installer.ps1` with full x64 Python with Tcl/Tk
 and Inno Setup 6.3 or later. The build writes
 `installer\Output\SPIKE2-VPX-Setup.exe`. The installer bundles the tools and
 Python. The first setup downloads the upstream runtime image and verifies
-its pinned SHA-256. Uninstall preserves the private runtime and player data.
+its pinned SHA-256.
+
+### Uninstall
+
+Uninstall from Windows **Installed apps** under the same Windows account that
+set up the emulator. Uninstall closes the bundled SPIKE 2 VPX processes and
+removes the private `SPIKE2-VPX` WSL runtime, the controller registration,
+and the app's local settings, logs, runtime download, and cached card copies.
+This includes the `SPIKE2-VPX-cardcache` subfolders for current and previously
+recorded cache locations. High scores and machine settings inside the runtime are deleted.
+Keep any generated image you want to retain outside the app's cache before
+uninstalling. Original SD-card downloads, external images, VPX tables, and
+other WSL distributions are kept. WSL itself is shared and stays installed.
 
 ```powershell
 python -m pip install -r requirements-dev.txt

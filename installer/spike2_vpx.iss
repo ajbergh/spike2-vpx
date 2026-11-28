@@ -15,9 +15,13 @@ SolidCompression=yes
 SetupIconFile={#ProjectDir}\assets\spike2_vpx.ico
 UninstallDisplayIcon={app}\assets\spike2_vpx.ico
 
+[Messages]
+ConfirmUninstall=Remove %1, its private emulator runtime, and its local settings and cache? Scores and settings stored inside the emulator will be deleted.
+
 [Files]
 Source: "{#ProjectDir}\Spike2Vpx.pyw"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\spike2_vpx_setup.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ProjectDir}\spike2_vpx_uninstall.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\Play-Spike2Vpx.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ProjectDir}\installer\setup_spike2_wsl.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
@@ -31,17 +35,37 @@ Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; F
 Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\spike2_vpx.ico"
 
 [Run]
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX and check WSL 2 requirements"; Flags: postinstall nowait runasoriginaluser skipifsilent
-
-[UninstallRun]
-Filename: "{app}\python\python.exe"; Parameters: """{app}\tools\spike2_emu\vpx\standalone_controller.py"" unregister"; Flags: runhidden waituntilterminated; RunOnceId: "spike2-vpx-controller"
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"" --setup"; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX and set up its requirements"; Flags: postinstall nowait runasoriginaluser skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{app}\storage.ini"
+Type: files; Name: "{app}\cache-locations.txt"
 
 [Code]
 var
   StoragePage: TInputQueryWizardPage;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Status: Integer;
+  Report: String;
+  Details: TArrayOfString;
+begin
+  if CurUninstallStep <> usUninstall then
+    Exit;
+  UninstallProgressForm.StatusLabel.Caption := 'Stopping and removing the SPIKE 2 runtime...';
+  Report := ExpandConstant('{tmp}\spike2-vpx-cleanup.txt');
+  if not Exec(ExpandConstant('{app}\python\python.exe'),
+      ExpandConstant('-I -B "{app}\spike2_vpx_uninstall.py" "') + Report + '"',
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Status) then
+    RaiseException('Could not start SPIKE 2 VPX cleanup. ' + SysErrorMessage(Status));
+  if Status <> 0 then
+  begin
+    if LoadStringsFromFile(Report, Details) and (GetArrayLength(Details) > 0) then
+      RaiseException(Details[0]);
+    RaiseException('SPIKE 2 VPX cleanup failed. Exit code ' + IntToStr(Status) + '.');
+  end;
+end;
 
 procedure BrowseStorage(Sender: TObject);
 var
@@ -76,7 +100,7 @@ end;
 procedure InitializeWizard;
 begin
   StoragePage := CreateInputQueryPage(wpSelectDir, 'SPIKE 2 storage',
-    'Choose where the emulator and first-load SD-card copies are stored.',
+    'Choose where the emulator, compact ZIP imports, and first-load SD-card copies are stored.',
     'Choose local Windows folders or leave them blank. The default runtime is under %LOCALAPPDATA%\Spike2Vpx, and the default cache is in WSL. Existing runtimes stay in place.');
   AddStorageFolder('Emulator runtime folder (empty folder for a new runtime)', 'RuntimeFolder');
   AddStorageFolder('SD-card cache location (uses a SPIKE2-VPX-cardcache subfolder)', 'CacheFolder');
@@ -119,17 +143,51 @@ begin
   SetPreviousData(PreviousDataKey, 'CacheFolder', StoragePage.Values[1]);
 end;
 
+procedure RememberPreviousCache(const Config: String);
+var
+  Lines, History: TArrayOfString;
+  Index, HistoryIndex: Integer;
+  Folder, RecordPath: String;
+begin
+  if not FileExists(Config) then
+    Exit;
+  if not LoadStringsFromFile(Config, Lines) then
+    RaiseException('Could not read the previous SPIKE 2 storage locations.');
+  for Index := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    if Pos('cache = ', Lines[Index]) <> 1 then
+      Continue;
+    Folder := Trim(Copy(Lines[Index], 9, Length(Lines[Index])));
+    if (Folder = '') or (CompareText(Folder, StoragePage.Values[1]) = 0) then
+      Exit;
+    RecordPath := ExpandConstant('{app}\cache-locations.txt');
+    if FileExists(RecordPath) and not LoadStringsFromFile(RecordPath, History) then
+      RaiseException('Could not read the previous SPIKE 2 cache locations.');
+    for HistoryIndex := 0 to GetArrayLength(History) - 1 do
+      if CompareText(History[HistoryIndex], Folder) = 0 then
+        Exit;
+    SetArrayLength(Lines, 1);
+    Lines[0] := Folder;
+    if not SaveStringsToUTF8File(RecordPath, Lines, True) then
+      RaiseException('Could not save the previous SPIKE 2 cache location.');
+    Exit;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Lines: TArrayOfString;
+  Config: String;
 begin
   if CurStep = ssPostInstall then
   begin
+    Config := ExpandConstant('{app}\storage.ini');
+    RememberPreviousCache(Config);
     SetArrayLength(Lines, 3);
     Lines[0] := '[Storage]';
     Lines[1] := 'runtime = ' + StoragePage.Values[0];
     Lines[2] := 'cache = ' + StoragePage.Values[1];
-    if not SaveStringsToUTF8File(ExpandConstant('{app}\storage.ini'), Lines, False) then
+    if not SaveStringsToUTF8File(Config, Lines, False) then
       RaiseException('Could not save SPIKE 2 storage locations.');
   end;
 end;

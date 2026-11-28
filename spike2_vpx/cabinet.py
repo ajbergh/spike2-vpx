@@ -20,6 +20,8 @@ DEFAULTS = {
     "lcd": "Automatic (spare screen)",
 }
 WINDOWED_LCD = "windowed"
+LCD_RECT = "lcd_rect"
+LCD_RECT_FIELDS = {"rx": "X offset", "ry": "Y offset", "w": "Width", "h": "Height"}
 DISABLED_B2S = "disabled"
 
 
@@ -31,6 +33,81 @@ def screen_name(monitor):
     number = monitor["n"]
     native = monitor.get("display_number")
     return f"Screen {number} (Windows {native})" if native and native != number else f"Screen {number}"
+
+
+def lcd_rectangle(rect):
+    try:
+        if not isinstance(rect, dict) or set(rect) != LCD_RECT_FIELDS.keys():
+            raise ValueError
+        if any(type(value) not in (int, str) for value in rect.values()):
+            raise ValueError
+        pixels = {key: int(value) for key, value in rect.items()}
+    except ValueError:
+        raise ValueError("Enter whole pixel values for the Stern LCD width, height and offsets.") from None
+    if not 160 <= pixels["w"] <= 16384 or not 120 <= pixels["h"] <= 16384:
+        raise ValueError("Set the Stern LCD width from 160 to 16384 and height from 120 to 16384 pixels.")
+    if pixels["rx"] < 0 or pixels["ry"] < 0:
+        raise ValueError("Set Stern LCD offsets to zero or more pixels from the screen's top-left corner.")
+    return pixels
+
+
+def lcd_bounds(lcd, rect):
+    pixels = lcd_rectangle(rect)
+    if lcd is None:
+        raise ValueError("Choose a Stern LCD screen for the borderless region.")
+    rx, ry, width, height = (pixels[key] for key in LCD_RECT_FIELDS)
+    if rx + width > lcd["w"] or ry + height > lcd["h"]:
+        raise ValueError(f"The Stern LCD region must fit inside {screen_name(lcd)} ({lcd['w']} × {lcd['h']}).")
+    return {**lcd, "x": lcd["x"] + rx, "y": lcd["y"] + ry, "w": width, "h": height}
+
+
+def screenres_backglass(selector, monitors):
+    ordered = sorted(monitors, key=lambda screen: screen["x"])
+    try:
+        if selector.startswith("="):
+            index = int(selector[1:])
+            left = ordered[index - 1]["x"] if 1 <= index <= len(ordered) else None
+            matches = [screen for screen in ordered if screen["x"] == left]
+        elif selector.startswith("@"):
+            left = int(selector[1:])
+            matches = [screen for screen in ordered if screen["x"] == left]
+        else:
+            number = int(selector.upper().removeprefix(r"\\.\DISPLAY"))
+            matches = [screen for screen in ordered if screen.get("display_number") == number]
+    except ValueError:
+        matches = []
+    if len(matches) != 1:
+        raise ValueError("The ScreenRes backglass screen is missing or ambiguous. "
+                         "Use its Windows display number in the file.")
+    return matches[0]
+
+
+def import_screenres(path, monitors):
+    values = padcabinet.parse_screenres(Path(path).read_text(encoding="utf-8-sig", errors="replace"))
+    if len(values) < 12:
+        raise ValueError("Choose a ScreenRes file with DMD width, height and offsets.")
+    backglass = screenres_backglass(values[4], monitors)
+
+    def pixels(value, extent):
+        return round(float(value[:-1]) * extent / 100) if value.endswith("%") else int(value)
+
+    bw, bh = backglass["w"], backglass["h"]
+    try:
+        bx, by, width, height, dx, dy = (pixels(value, extent)
+                                         for value, extent in zip(values[5:11], (bw, bh) * 3))
+    except (ValueError, OverflowError):
+        raise ValueError("The ScreenRes backglass offsets or DMD coordinates are invalid.") from None
+    if width <= 0 or height <= 0:
+        raise ValueError("The ScreenRes file has no explicit DMD size. Set its size or enter the LCD region manually.")
+
+    # B2S places the DMD relative to the configured backglass window.
+    x, y = backglass["x"] + bx + dx, backglass["y"] + by + dy
+    screen = next((m for m in monitors if m["x"] <= x <= m["x"] + m["w"] - width
+                   and m["y"] <= y <= m["y"] + m["h"] - height), None)
+    if screen is None:
+        raise ValueError("The ScreenRes DMD rectangle does not fit inside any connected screen.")
+    rect = lcd_rectangle({"rx": x - screen["x"], "ry": y - screen["y"], "w": width, "h": height})
+    return {"lcd": screen_key(screen), LCD_RECT: rect}
 
 
 def resolve(layout, monitors):
@@ -56,6 +133,8 @@ def resolve(layout, monitors):
             and sum(m["x"] == backglass["x"] for m in monitors) > 1):
         raise ValueError("B2S needs a unique horizontal position for the backglass screen. "
                          "Move it sideways in Windows Display settings or use B2S default.")
+    if LCD_RECT in layout:
+        lcd_bounds(roles.get("lcd"), layout[LCD_RECT])
     return roles
 
 
@@ -63,7 +142,8 @@ def saved_layout(settings, monitors):
     layout = settings.get("cabinet_layout")
     if isinstance(layout, dict):
         return {role: value for role, value in layout.items()
-                if role in ROLES and isinstance(value, str)}
+                if (role in ROLES and isinstance(value, str))
+                or (role == LCD_RECT and isinstance(value, dict))}
     # Preserve the LCD-only setting from previous app versions.
     legacy = settings.get("lcd_monitor")
     if legacy:
@@ -101,12 +181,14 @@ def backglass_warnings(table, roles):
     return issues
 
 
-def apply_lcd(board, lcd, monitors):
+def apply_lcd(board, lcd, monitors, rect=None):
     setting = {"mode": "fullscreen", "monitor": lcd["n"], "border": False} if lcd else {"mode": "free"}
+    if rect is not None:
+        setting.update(lcd_rectangle(rect), mode="region")
     padisplay.save(setting, str(Path(board) / "display.conf"), monitors)
 
 
-def apply(board, roles, monitors, table=None):
+def apply(board, roles, monitors, table=None, *, lcd_rect=None):
     playfield = roles.get("playfield")
     backglass = roles.get("backglass")
     kit = padcabinet.update(padlaunch.kit_load(), backglass=backglass["n"] if backglass else 0)
@@ -122,4 +204,4 @@ def apply(board, roles, monitors, table=None):
         # B2S owns its DMD and table settings. Only place the backglass.
         padcabinet.write_res(path, table_kit, monitors)
     padlaunch.kit_save(kit)
-    apply_lcd(board, roles.get("lcd"), monitors)
+    apply_lcd(board, roles.get("lcd"), monitors, lcd_rect)

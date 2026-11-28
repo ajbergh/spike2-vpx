@@ -38,6 +38,7 @@ if RIG not in sys.path:
     sys.path.insert(0, RIG)
 
 import padpath    # noqa: E402
+from padloading import COPYING  # noqa: E402
 
 DATA_ROOT = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Spike2Vpx")
 KIT = os.path.join(DATA_ROOT, "vpx.json")
@@ -176,15 +177,32 @@ def _version_key(path):
 RUNTIME_DISTRO = "SPIKE2-VPX"
 
 
+def read_table_map(path):
+    """Read a map, optionally sharing the wiring from a sibling shadow map."""
+    with open(path, encoding="utf-8") as file:
+        mapping = json.load(file)
+    if not isinstance(mapping, dict):
+        raise ValueError("Expected a VPX map object.")
+    base = mapping.pop("base_map", None)
+    if base is None:
+        return mapping
+    if not isinstance(base, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.shadow\.json", base):
+        raise ValueError("A shared VPX map must name a sibling shadow map.")
+    with Path(path).with_name(base).open(encoding="utf-8") as file:
+        wiring = json.load(file)
+    if not isinstance(wiring, dict) or "base_map" in wiring:
+        raise ValueError("A shared VPX base map must contain its own wiring.")
+    return {**wiring, **mapping}
+
+
 def table_map(title):
     """Map metadata in PAD.Controller's user/kit lookup order."""
     if title:
         for directory in (USER_MAPS, HERE):
             for suffix in (".vpxmap.json", ".shadow.json"):
                 try:
-                    with open(os.path.join(directory, title + suffix), encoding="utf-8") as f:
-                        m = json.load(f)
-                    if isinstance(m, dict) and (m.get("platform") or "spike2").lower() == "spike2":
+                    m = read_table_map(os.path.join(directory, title + suffix))
+                    if (m.get("platform") or "spike2").lower() == "spike2":
                         return m
                 except (OSError, ValueError):
                     pass
@@ -425,12 +443,14 @@ class Launch:
     """One run started for a table: a slot, a watch.sh, and the stop for it."""
 
     def __init__(self, title, card, dist=None, minutes=240, *, game_dir=None, prepared=False,
-                 audio_control=None, cache_update=None):
+                 audio_control=None, cache_update=None, activity=None):
         self.title = game_for(title)
         self.card = card
         self.game_dir = game_dir
         self.audio_control = audio_control
         self.cache_update = cache_update
+        self.activity = activity
+        self.cache_log_offset = None
         self.windows_lcd = None
         self.lighting_topper = False
         self.lighting_scan = ""
@@ -476,11 +496,11 @@ class Launch:
             app = Path(RIG).parents[1]
             if str(app) not in sys.path:
                 sys.path.append(str(app))
-            from spike2_vpx.storage import installed_folder
+            from spike2_vpx.storage import cache_folder
 
-            folder = installed_folder(app, "cache")
+            folder = cache_folder(app)
             if folder is not None:
-                cache = padpath.to_wsl(str(folder / "SPIKE2-VPX-cardcache"), self.distro)
+                cache = padpath.to_wsl(str(folder), self.distro)
                 drive = padpath.to_wsl(folder.anchor, self.distro).rstrip("/")
                 return ["PAD_CARD_CACHE_DIR=" + cache, "PAD_CARD_CACHE_DRIVE=" + drive]
         drive = host_drive(self.distro)
@@ -565,10 +585,11 @@ class Launch:
             env.extend(["PAD_WINDOWS_LCD=1", "PAD_WINDOWS_LCD_W=%d" % (right - x),
                         "PAD_WINDOWS_LCD_H=%d" % (bottom - y),
                         "PAD_WINDOWS_LCD_FRAME=" + self.lcd_frame_path().name])
+        if self.prepared or (self.distro or "").casefold() == RUNTIME_DISTRO.casefold():
+            env.append("PAD_VPX_PERSIST=1")
         if self.prepared:
             env += ["PAD_SELECT=0", "PAD_TOPPER=%d" % self.lighting_topper, "PAD_BALL_FEED=0",
-                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0",
-                     "PAD_VPX_PERSIST=1"]
+                     "PAD_AUTO_ATTRACT=0", "PAD_RECORD=0", "PAD_PIVOT=", "PAD_SAVESTATES=0"]
             if self.lighting_topper:
                 env.append("PAD_GL2_OFF=1")
             if self.game_dir:
@@ -605,6 +626,8 @@ class Launch:
             log(why)
             raise RuntimeError(why)
         if self.prepared and self.distro == "SPIKE2-VPX":
+            if self.activity:
+                self.activity("Checking ARM execution in the SPIKE 2 runtime…")
             cmd = wsl_head(self.distro, root=True) + ["-e", "bash", self.rig_wsl + "/vpx_arm_exec.sh", "repair"]
             self.note("[setup] Checking ARM execution in the SPIKE 2 runtime.")
             with open(self.logfile, "ab") as out:
@@ -614,6 +637,8 @@ class Launch:
                 raise RuntimeError("WSL could not start the ARM guest. Open Setup and run Repair. See " + self.logfile)
         base = self.base_rig()
         if base:
+            if self.activity:
+                self.activity("Preparing the SPIKE 2 filesystem…")
             card = padpath.to_wsl(self.card, self.distro) if self.card else ""
             cmd = wsl_head(self.distro) + [
                 "-e", "bash", self.rig_wsl + "/prepare_vpx_root.sh", base, card,
@@ -632,13 +657,19 @@ class Launch:
         # no room for the copy (the game reads the image where it lies, 2.5
         # minutes to attract instead of 40 s) says so instead of "Reading the
         # card image" for all of them. Never a refusal: a slow game beats none.
+        if self.activity:
+            self.activity("Checking space for the SD-card cache…")
         self.check = self.cache_check()
+        copying = False
         if self.check:
             state, words = space_words(self.check)
             self.note("[card-check] %s: %s" % (state, words))
             log("card check for %s: %s: %s" % (self.title, state, words))
-            if self.cache_update and state in ("room", "evict", "copying"):
+            copying = state in ("room", "evict", "copying")
+            if self.cache_update and copying:
                 self.cache_update("Caching the SD-card image. This launch may take longer than usual.")
+        if self.activity:
+            self.activity("Preparing the SD-card cache…" if copying else "Starting Stern…")
         self._start_watch()
         log("started %s on slot %d from %s (distro %s, log %s)"
             % (self.title, self.slot, self.card, self.distro or "default", self.logfile))
@@ -655,8 +686,34 @@ class Launch:
             self.lcd_frame_path().unlink(missing_ok=True)
         cmd = head + self.env() + ["bash", "%s/watch.sh" % self.rig_wsl, str(self.minutes)]
         with open(self.logfile, "ab") as out:
+            if self.activity and self.card:
+                self.cache_log_offset = out.tell()
             self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
                                          creationflags=_CREATE_NO_WINDOW)
+
+    def poll_cache_progress(self):
+        if self.cache_log_offset is None:
+            return
+        latest = None
+        try:
+            with open(self.logfile, "rb") as stream:
+                stream.seek(self.cache_log_offset)
+                for raw in stream:
+                    if not raw.endswith(b"\n"):
+                        break  # Wait for the writer to finish the line.
+                    self.cache_log_offset = stream.tell()
+                    line = raw.decode("utf-8", "replace")
+                    if copy := COPYING.match(line):
+                        done, total, _ = map(int, copy.groups())
+                        latest = ("Copying the SD-card image into the cache…", done * 2**20, total * 2**20)
+                    elif line.startswith(("[card] local cache ready", "[card] using local cache")):
+                        latest = ("Starting Stern from the local cache…",)
+                    elif line.startswith(("[card] copy stalled", "[card] cache not usable", "[card] disk too full")):
+                        latest = ("Reading the SD-card image from its source…",)
+        except OSError:
+            return
+        if latest:
+            self.activity(*latest)
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None

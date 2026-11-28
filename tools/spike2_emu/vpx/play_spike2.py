@@ -109,6 +109,7 @@ def startup_error(launch):
 
 def wait_for_rig(launch, deadline):
     while launch.alive() and time.monotonic() < deadline:
+        launch.poll_cache_progress()
         record = padcontroller.Rig.board_slot(launch.slot)
         if record and record.get("label") == launch.label:
             if record.get("game") != launch.title:
@@ -122,6 +123,7 @@ def wait_for_game(launch, rig, deadline, player=None):
     while launch.alive() and time.monotonic() < deadline:
         if player is not None and player.poll() is not None:
             return False
+        launch.poll_cache_progress()
         if padcontroller.block_in_wsl(rig, timeout=min(5, max(0.1, deadline - time.monotonic()))):
             return True
         time.sleep(0.5)
@@ -220,16 +222,19 @@ def play(launch, exe, table, timeout, progress=None, *, overlap=False, disable_b
     with ExitStack() as cleanup:
         cleanup.callback(launch.stop)
         command = [str(exe), "-ExtMinimized"]
+        target = vpx_lcd.placement_target()
+        overlay = target is None and vpx_lcd.windowed_overlay()
+        if overlay:
+            command.append("-DisableTrueFullscreen")
         if disable_b2s:
             folder = cleanup.enter_context(TemporaryDirectory(prefix="spike2-vpx-b2s-"))
             ini = Path(folder) / "VPinballX.ini"
             b2s_disabled_ini(exe, ini)
             command.extend(["-Ini", str(ini)])
         command.extend(["-play", str(table)])
-        target = vpx_lcd.fullscreen_target()
         launch.windows_lcd = target
         launch.start()
-        if target:
+        if target is not None or overlay:
             cleanup.callback(vpx_lcd.Placement(launch, target).close)
         deadline = time.monotonic() + timeout
         rig = wait_for_rig(launch, deadline)
@@ -356,10 +361,14 @@ def main():
         table = args.table.resolve(strict=True)
         if not table.is_file() or table.suffix.lower() != ".vpx":
             raise ValueError("Pass a PAD-patched .vpx table.")
-        title = read_title(table)
+        script = embedded_script(table)
+        title = read_title(table, script)
         mapping = padlaunch.table_map(title)
         if not mapping or mapping.get("platform", "spike2") != "spike2":
             raise ValueError(f"No SPIKE 2 map was found for {title}.")
+        from padvpx import require_script_release
+
+        require_script_release(script, mapping)
         native_title = padlaunch.game_for(title)
         if not re.fullmatch(r"[A-Za-z0-9_-]+", native_title):
             raise ValueError(f"Invalid native SPIKE 2 game name in the map for {title}.")

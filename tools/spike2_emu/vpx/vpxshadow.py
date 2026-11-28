@@ -219,6 +219,22 @@ def _procs(lines):
     return out
 
 
+def pulse_scripted_start(lines, m, rep):
+    """Turn synthetic Start presses in named handlers into a complete switch pulse."""
+    names = {name.casefold() for name in m.get("pulse_start_subs", ())}
+    if not names:
+        return
+    press = r"[ \t]*Table1_KeyDown[ \t]*\([ \t]*StartGameKey[ \t]*\)[ \t]*\r?"
+    consecutive = re.compile(rf"^([ \t]*){press}(?:\n{press})*$", re.I | re.M)
+    for name, first, last in reversed(_procs(lines)):
+        if name.casefold() in names:
+            body = "\n".join(lines[first + 1:last])
+            updated, count = consecutive.subn(rf"\g<1>vpmTimer.PulseSw {m['cabinet']['start']}", body)
+            if count:
+                lines[first + 1:last] = updated.split("\n")
+                rep.append("balanced scripted Start in %s" % name)
+
+
 def empty_walks(lines, quiet, rep):
     """PAD-1102: module variables only a quieted Sub ever `Set`, which code
     still running walks with `For Each`. Munsters' StartRainbow (quieted: the
@@ -1951,6 +1967,7 @@ def dof_calls(lines, m):
 def patch(script, m):
     rep = []
     lines = script.split("\n")
+    pulse_scripted_start(lines, m, rep)
     dof = dof_calls(lines, m)
     for name in m["switches"]:
         if name != "_" and _calls_orig(m, name):   # its own sub runs and fires them
@@ -2320,12 +2337,22 @@ def main(argv):
         print(__doc__)
         return 2
     mpath, src, outdir = argv[1:]
-    m = json.load(open(mpath, encoding="utf-8"))
-    os.makedirs(outdir, exist_ok=True)
+    from padlaunch import read_table_map
+    from padvpx import require_script_release
+
+    m = read_table_map(mpath)
     table = vpxfile.VpxTable(src)
     if not table.verify():
         print("refusing: %s does not verify against its own MAC" % src)
         return 1
+    original_script = table.script()
+    try:
+        require_script_release(original_script, m)
+    except ValueError as exc:
+        table.ole.close()
+        print(exc, file=sys.stderr)
+        return 2
+    os.makedirs(outdir, exist_ok=True)
     info = [table.item_info(d) for d in table.items]
     names = {n.lower() for _, n, _ in info} | {n.lower() for n in m.get("retrofit_triggers", {})} \
         | {n.lower() for n in m.get("retrofit_lights", {}).get("lights", {})} \
@@ -2339,7 +2366,7 @@ def main(argv):
         print("WARNING: a sound is played at %s, which has no position (PlaySoundAt reads its .x)" % name)
     m["_lightseqs"] = sorted(n for k, n, _ in info if k == "LightSeq")
     m["_shapes"] = sorted(n for k, n, _ in info if k in SHAPELESS)
-    script, rep = patch(table.script(), m)
+    script, rep = patch(original_script, m)
     if unlit:
         rep.insert(0, "left out light(s) this copy of the table does not have: %s"
                    % ", ".join(unlit))

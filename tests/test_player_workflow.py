@@ -2,6 +2,7 @@ from base64 import b64encode
 import json
 import os
 from pathlib import Path
+import stat
 from subprocess import CompletedProcess, run
 import sys
 import time
@@ -99,6 +100,66 @@ def test_rejects_prepared_table_for_another_edition(player, tmp_path, monkeypatc
     with pytest.raises(ValueError, match="prepared for jaws_le"):
         player.prepare_table(Game("godzilla_le", "card.raw"), table, Mock())
     assert not player.library()
+
+
+@pytest.mark.parametrize(("release", "expected"), [
+    ("6.1.0", "deadpool_pro"), ("7.0.0", "deadpool_pro_v7"), ("9.9.9", None),
+])
+def test_deadpool_table_release_selects_the_matching_map(release, expected):
+    import padcontroller
+    import padlaunch
+    import padvpx
+
+    script = f'\' JP\'s Deadpool; jpsdeadpool\r\nConst myVersion = "{release}"\r\n'
+    matches = padvpx.fitting("table.vpx", script)
+    title, info = padvpx.choose(matches, title="deadpool_pro")
+    assert title == expected
+    if info:
+        assert padlaunch.game_for(title) == "deadpool_pro"
+        assert padcontroller.VpxMap(title).cabinet == padcontroller.VpxMap("deadpool_pro").cabinet
+    if release == "7.0.0":
+        assert info["output"] == "JP's Deadpool v700 (PAD).vpx"
+        assert any(row.table == "JP's Deadpool 7.0.0" for row in supported_tables())
+
+
+def test_prepared_deadpool_v7_requires_its_own_patch(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    table = tmp_path / "Deadpool (PAD).vpx"
+    table.touch()
+    script = 'Const myVersion = "7.0.0"\nController.GameName = "deadpool_pro"\nCreateObject("PAD.Controller")'
+    monkeypatch.setattr(module.play_spike2, "embedded_script", lambda _: script)
+    game = Game("deadpool_pro", "card.raw")
+    with pytest.raises(ValueError, match="different release"):
+        player.prepare_table(game, table, Mock())
+    script = script.replace('"deadpool_pro"', '"deadpool_pro_v7"')
+    assert player.prepare_table(game, table, Mock()).table == str(table)
+
+
+def test_batman_multiplayer_start_pulses_without_changing_other_key_handlers():
+    import padlaunch
+    import padvpx
+    import vpxshadow
+
+    mapping = padlaunch.table_map("batman")
+    script = """' b66_orig Daphishbowl and Mr H.
+Const myVersion = "1.1.0"
+Sub SceneMPSelect(keycode)
+    Table1_KeyDown(StartGameKey)
+End Sub
+Sub tmrVPXMP_Timer()
+    Table1_KeyDown(StartGameKey)
+    Table1_KeyDown(StartGameKey)
+End Sub
+Sub OtherTimer()
+    Table1_KeyDown(StartGameKey)
+End Sub"""
+    assert [title for title, _ in padvpx.fitting("table.vpx", script)] == ["batman"]
+    assert padvpx.fitting("table.vpx", script.replace("1.1.0", "9.9.9")) == []
+    lines = script.splitlines()
+    vpxshadow.pulse_scripted_start(lines, mapping, [])
+    assert lines.count("    vpmTimer.PulseSw 1036") == 2
+    assert lines.count("    Table1_KeyDown(StartGameKey)") == 1
 
 
 @pytest.mark.parametrize("existing_conversion", [False, True])
@@ -211,15 +272,20 @@ def test_zip_import_extracts_one_verified_card_without_using_archive_paths(playe
 
     player.inspect_image = inspect
     monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
-    game, _ = player.prepare_image(source)
+    events = Mock()
+    game, _ = player.prepare_image(source, progress=events)
     assert game.title == "godzilla_le"
     assert Path(game.image).parent == tmp_path / "images"
     assert Path(game.image).read_bytes() == b"card"
     assert list((tmp_path / "images").iterdir()) == [Path(game.image)]
     assert source.read_bytes() == original
+    assert [call.args[1:] for call in events.call_args_list] == [(0, 4), (4, 4), ()]
 
 
-def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(player, tmp_path):
+def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
     source = tmp_path / "Stern image.zip"
     with ZipFile(source, "w") as archive:
         archive.writestr("card1.raw", b"card")
@@ -232,6 +298,92 @@ def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(play
     with pytest.raises(ValueError, match="Not a SPIKE 2 image"):
         player.import_archive(source)
     assert not list((tmp_path / "images").iterdir())
+
+
+def test_reimport_reuses_verified_image_and_reimports_if_missing_or_changed(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    source = tmp_path / "Stern image.zip"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("godzilla_1_12_0.raw", b"first version")
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
+    identify = Mock(side_effect=lambda path: Game("godzilla_le", str(path)))
+    monkeypatch.setattr(player, "inspect_image", identify)
+    first, _ = player.prepare_image(source)
+    player.save(first)
+
+    # A fresh player uses the saved import record without extracting or inspecting again.
+    player.setup.settings = json.loads(player.setup.settings_path.read_text(encoding="utf-8"))
+    second, _ = player.prepare_image(source)
+    player.save(second)
+    assert second == first
+    assert player.library() == [first]
+    assert list((tmp_path / "images").iterdir()) == [Path(first.image)]
+    identify.assert_called_once()
+
+    Path(first.image).unlink()
+    recovered, _ = player.prepare_image(source)
+    assert Path(recovered.image).read_bytes() == b"first version"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("godzilla_1_13_0.raw", b"new version")
+    updated, _ = player.prepare_image(source)
+    assert updated.image_version == "1.13.0"
+    assert Path(updated.image).read_bytes() == b"new version"
+    assert identify.call_count == 3
+
+
+def test_zip_import_passes_only_the_member_to_the_local_runtime(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    source = tmp_path / "share" / "Stern image.zip"
+    source.parent.mkdir()
+    with ZipFile(source, "w") as archive:
+        archive.writestr("folder/godzilla_1_12_0.RAW", b"card")
+    local = Game("godzilla_le", r"\\wsl.localhost\SPIKE2-VPX\home\pad\card.raw")
+    expected = Game("godzilla_le", "old.raw")
+
+    def import_local(data, size, selected, *, progress):
+        assert data.read() == b"card"
+        assert size == 4
+        assert selected == expected
+        assert progress is events
+        return local
+
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: True)
+    monkeypatch.setattr(player, "import_local_card", import_local)
+    events = Mock()
+    game, _ = player.prepare_image(source, expected, progress=events)
+    assert game.image == local.image
+    assert game.image_version == "1.12.0"
+    assert not (tmp_path / "images").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows sparse cache files")
+def test_zip_import_uses_the_installer_cache_and_preserves_sparse_image(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "Selected cache"
+    (tmp_path / "storage.ini").write_text(f"[Storage]\ncache = {cache}\n", encoding="utf-8")
+    monkeypatch.setattr(module, "APP", tmp_path)
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: True)
+    source = tmp_path / "Stern image.zip"
+    block = 128 * 1024
+    with ZipFile(source, "w") as archive:
+        archive.writestr("card.raw", b"x" * block + b"y" * block + bytes(block))
+
+    def inspect(image):
+        assert image.read_bytes()[block] == ord("y")
+        return Game("godzilla_le", str(image))
+
+    monkeypatch.setattr(player, "inspect_image", inspect)
+    monkeypatch.setattr(module.cardcopy, "unused_ranges", lambda _: [(block, 2 * block)])
+    game, _ = player.prepare_image(source)
+    image = Path(game.image)
+    assert image.parent == cache / "SPIKE2-VPX-cardcache" / "imports"
+    assert image.name.startswith("godzilla_le-")
+    assert list(image.parent.iterdir()) == [image]
+    assert image.stat().st_file_attributes & stat.FILE_ATTRIBUTE_SPARSE_FILE
+    assert image.read_bytes() == b"x" * block + bytes(2 * block)
 
 
 def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path, monkeypatch):
@@ -258,7 +410,7 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
     layout = {"playfield": "play", "backglass": "glass", "lcd": "lcd"}
     player.save_layout(layout, screens)
     assert kit_save.call_args.args[0]["player"] == {"monitor": 1}
-    assert "x=-1280" in (tmp_path / "rig-board" / "display.conf").read_text()
+    assert "x=0 y=720 w=1280 h=720" in (tmp_path / "rig-board" / "display.conf").read_text()
     assert "Attach a .directb2s" in player.preflight(game)[0]
     source = tmp_path / "original.directb2s"
     source.write_text("<DirectB2SData/>")
@@ -285,12 +437,37 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
         player.preflight(game)
 
 
-def test_play_defaults_to_borderless_fullscreen_on_a_spare_display(player, tmp_path, monkeypatch):
+@pytest.mark.parametrize("selector", ["4", "=3", "@1920", r"\\.\DISPLAY4"])
+def test_import_screenres_uses_backglass_origin_and_offsets(tmp_path, selector):
+    from spike2_vpx import cabinet
+
+    screens = [
+        {"n": 1, "x": 0, "y": 0, "w": 1920, "h": 1080, "primary": True, "display_number": 1},
+        {"n": 2, "x": -1024, "y": -150, "w": 1024, "h": 768, "device": "dmd"},
+        {"n": 3, "x": 1920, "y": -100, "w": 1920, "h": 1080, "display_number": 4},
+    ]
+    path = tmp_path / "ScreenRes.txt"
+    text = (f"# V2\n1920\n1080\n1920\n1080\n{selector}\n1.25%\n10\n"
+            "# DMD width, height, X, Y, flip\n1024\n53.3333%\n-2968\n36\n0\n0\n0\n")
+    path.write_text(text, encoding="utf-8-sig")
+    assert cabinet.import_screenres(path, screens) == {
+        "lcd": "dmd", "lcd_rect": {"rx": 0, "ry": 96, "w": 1024, "h": 576},
+    }
+    path.write_text(text.replace("-2968", "-2969"), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not fit"):
+        cabinet.import_screenres(path, screens)
+    path.write_text(text.replace("53.3333%", "0"), encoding="utf-8")
+    with pytest.raises(ValueError, match="no explicit DMD size"):
+        cabinet.import_screenres(path, screens)
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_play_places_the_lcd_on_a_spare_display(player, tmp_path, monkeypatch, custom):
     from spike2_vpx import cabinet
     from spike2_vpx import player as module
 
     primary = {"n": 1, "x": 0, "y": 0, "w": 1920, "h": 1080, "primary": True, "device": "primary"}
-    spare = {"n": 2, "x": -1280, "y": 0, "w": 1280, "h": 720, "primary": False, "device": "spare"}
+    spare = {"n": 2, "x": -1024, "y": -150, "w": 1024, "h": 768, "primary": False, "device": "spare"}
     screens = [primary, spare]
     image, table = tmp_path / "card.raw", tmp_path / "Godzilla (PAD).vpx"
     image.touch()
@@ -306,10 +483,26 @@ def test_play_defaults_to_borderless_fullscreen_on_a_spare_display(player, tmp_p
         'Controller.GameName = "godzilla_le"\nCreateObject("PAD.Controller")'))
     monkeypatch.setattr(module.padlaunch, "Launch", Mock())
     path = tmp_path / "rig-board" / "display.conf"
+    if custom:
+        rect = {"rx": 0, "ry": 96, "w": 1024, "h": 576}
+        layout = {"lcd": "spare", cabinet.LCD_RECT: rect}
+        monkeypatch.setattr(module.padlaunch, "kit_load", lambda: {})
+        monkeypatch.setattr(module.padlaunch, "kit_save", Mock())
+        with pytest.raises(ValueError, match="must fit"):
+            player.save_layout({**layout, cabinet.LCD_RECT: {**rect, "ry": 200}}, screens)
+        player.save_layout(layout, screens, "Cabinet")
+        assert player.layout(screens) == player.profiles()["Cabinet"] == layout
+        assert "x=0 y=96 w=1024 h=576 fs=0" in path.read_text()
+        path.unlink()  # The next launch must regenerate the rectangle from the saved profile.
 
     def start(*_, lighting_report, **__):
-        assert "monitor=2 mode=fullscreen border=0" in path.read_text()
-        assert "x=-1280 y=0 w=1280 h=720 fs=1" in path.read_text()
+        conf = path.read_text()
+        if custom:
+            assert "monitor=2 mode=region border=0 rx=0 ry=96" in conf
+            assert "x=0 y=96 w=1024 h=576 fs=0" in conf
+        else:
+            assert "monitor=2 mode=fullscreen border=0" in conf
+            assert "x=0 y=0 w=1024 h=768 fs=1" in conf
         lighting_report((), "Stern lighting skipped.")
         return 0
 
@@ -337,6 +530,59 @@ def test_moved_image_can_restore_the_saved_pairing(player, tmp_path):
     game = player.relink_image(old, Game("godzilla_le", str(tmp_path / "new.raw")))
     assert player.library() == [game]
     assert game.table == old.table
+
+
+def test_newer_compact_card_replaces_the_pairing_and_retires_only_the_old_import(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "cache"
+    imports = cache / "imports"
+    imports.mkdir(parents=True)
+    monkeypatch.setattr(module.storage, "cache_folders", lambda _: (cache,))
+    title = "godzilla_le"
+    old = Game(title, str(imports / module.imported_image_name(title)), "table.vpx", "1.9.0", favorite=True)
+    new = Game(title, str(imports / module.imported_image_name(title)), image_version="1.10.0")
+    source = tmp_path / "original.zip"
+    original_raw = tmp_path / module.imported_image_name(title)
+    for path in (Path(old.image), Path(new.image), source, original_raw):
+        path.touch()
+    player.save(old)
+    player.save(Game("godzilla_pro", str(original_raw), image_version="1.8.0"))
+
+    with monkeypatch.context() as failed:
+        failed.setattr(player.setup, "save", Mock(side_effect=OSError("save failed")))
+        with pytest.raises(OSError, match="save failed"):
+            player.install_image(new)
+        assert Path(old.image).is_file()
+    player.setup.settings = json.loads(player.setup.settings_path.read_text(encoding="utf-8"))
+
+    saved, retired = player.install_image(new)
+    assert (saved.image, saved.table, saved.favorite, retired) == (new.image, old.table, True, "1.9.0")
+    assert saved in player.library()
+    assert not Path(old.image).exists()
+    assert all(path.is_file() for path in (Path(new.image), source, original_raw))
+
+
+def test_explicit_replacement_keeps_an_active_import_and_another_version(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "cache"
+    imports = cache / "imports"
+    imports.mkdir(parents=True)
+    monkeypatch.setattr(module.storage, "cache_folders", lambda _: (cache,))
+    game = []
+    for version in ("1.9.0", "1.10.0", "1.8.0"):
+        image = imports / module.imported_image_name("godzilla_le")
+        image.touch()
+        game.append(Game("godzilla_le", str(image), image_version=version))
+    old, new, separate = game
+    player.save(old)
+    player.save(separate)
+    monkeypatch.setattr(module.sessions, "records", lambda *_: iter([object()]))
+    saved, retired = player.install_image(new, previous=old)
+    assert saved == new and not retired
+    assert player.library() == [new, separate]
+    assert all(Path(row.image).is_file() for row in game)
 
 
 def test_recovery_requires_an_expired_owned_record_and_no_live_processes(player, monkeypatch):
@@ -393,7 +639,8 @@ def test_game_metadata_and_backup_round_trip_without_machine_registration(player
     assert player.library()[0].last_played
     assert player.table_release(updated) == "Godzilla Limited Edition v2.6"
     assert module.image_version(original.image) == "1.16.0"
-    player.setup.settings.update(display_profiles={"Desktop": {"lcd": "windowed"}, "Cabinet": {}},
+    region = {"lcd": "dmd", "lcd_rect": {"rx": 0, "ry": 96, "w": 1024, "h": 576}}
+    player.setup.settings.update(display_profiles={"Desktop": {"lcd": "windowed"}, "Cabinet": region},
                                  display_profile="Desktop", volume=55, restart_boot="machine-only")
     path = tmp_path / "backup.json"
     support.atomic_write(path, module.json.dumps(support.backup(player.setup.settings, False)).encode())
@@ -407,6 +654,7 @@ def test_game_metadata_and_backup_round_trip_without_machine_registration(player
     assert player.setup.settings["volume"] == 55
     assert player.setup.settings["restart_boot"] == "machine-only"
     assert player.profiles()["Desktop"] == {"lcd": "windowed"}
+    assert player.profiles()["Cabinet"] == region
     cache_set.assert_called_once_with(False)
 
 

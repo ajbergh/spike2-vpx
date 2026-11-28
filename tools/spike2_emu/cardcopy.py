@@ -191,7 +191,7 @@ def merge(runs, gap):
     return [(a, b) for a, b in out]
 
 
-def plan(img):
+def plan(img, *, gap=GAP):
     """(runs, size, notes): the byte ranges to read, the image size, one line per partition."""
     size = os.path.getsize(img)
     runs, trimmed, notes = [], [], []
@@ -213,7 +213,7 @@ def plan(img):
         at = max(at, b)
     if at < size:
         runs.append((at, size))
-    runs = [(a, min(b, size)) for a, b in merge(runs, GAP) if a < size]
+    runs = [(a, min(b, size)) for a, b in merge(runs, gap) if a < size]
     return runs, size, notes
 
 
@@ -235,6 +235,18 @@ def copy(img, out, runs, size):
                     dst.write(buf)
                 pos += n
         dst.truncate(size)
+
+
+def unused_ranges(img):
+    """Yield the complement of the filesystem's used ranges at their exact offsets."""
+    runs, size, _ = plan(img, gap=1)
+    offset = 0
+    for start, end in runs:
+        if start > offset:
+            yield offset, start
+        offset = end
+    if offset < size:
+        yield offset, size
 
 
 def main(argv):

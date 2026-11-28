@@ -66,6 +66,16 @@ def patch_script(src, m):
     drop_sw = {int(n) for n in re.findall(
         r"(?im)^\s*set\s+\w+\s*=\s*\(\s*new\s+droptarget\s*\)\s*\([^,]*,[^,]*,[^,]*,\s*(\d+)", src)}
 
+    # VPW's SAM processor gates switch 63 on two legacy solenoids. SPIKE 2
+    # reads ball presence from its magnet sensor directly.
+    src, magnet_sensors = re.subn(
+        r"(?ims)^([ \t]*Sub sw63_(?:Hit|unHit)[ \t]*)\r?\n.*?^[ \t]*End Sub\b",
+        r"\1\n\tController.Switch(63) = (sw63.BallCntOver > 0)\nEnd Sub",
+        src,
+    )
+    if magnet_sensors != 2:
+        raise SystemExit("the script is not the one this patcher knows: missing magnet sensor handlers")
+
     def need(tag):
         seen.add(tag)
 
@@ -157,6 +167,20 @@ def patch_script(src, m):
             need("flip" + mflip.group(1))
             continue
 
+        if re.match(r'^solcallback\((?:57|58)\)\s*=\s*"updatecoffinprocessorboard\b', low):
+            continue  # SAM-only magnet processor. The sensor handlers now report ball presence.
+
+        if msub and cur_sub == "coffinmagdown":
+            out.append(line)
+            out.append("\tPadCoffinDown = CBool(Enabled)")
+            out.append("\tPadUpdateMagnetPower")
+            need("coffin_down")
+            continue
+        if cur_sub == "hammer" and re.match(r"^magnethole\.isdropped\s*=", low):
+            # The hammer's short pulse ends before the disappearing-ball coil is released.
+            need("hammer_hole")
+            continue
+
         # ---- the drop-bank helpers used SAM's inverse polarity. PAD's
         # Switch API is logical: a dropped target makes its switch. Keep
         # the computed alias (switch_rewrite resolves it), change the state.
@@ -190,13 +214,13 @@ def patch_script(src, m):
 
     want = {"system", "gamename", "usesol", "uselamps", "modsol", "loadvpm", "fflips", "lamps",
             "tilt", "start_table_keydown", "start_table_keyup", "lockbar_table_keydown",
-            "lockbar_table_keyup", "flip15", "flip16"}
+            "lockbar_table_keyup", "flip15", "flip16", "coffin_down", "hammer_hole"}
     missing = want - seen
     if missing:
         raise SystemExit("the script is not the one this patcher knows: no %s" % ", ".join(sorted(missing)))
 
     text = "\n".join(out)
-    text += "\n".join([""] + gen_lamp_block(m) + gen_test_timer() + [""])
+    text += "\n".join([""] + gen_lamp_block(m) + gen_magnet_timer(m) + gen_test_timer() + [""])
     rep.append("literal switch numbers rewritten: %d; left on SAM numbers (no Spike 2 switch): %d"
                % (rewritten, dropped))
     return text, rep
@@ -311,6 +335,50 @@ def gen_test_timer():
             "\tf.Close",
             "\tfso.DeleteFile p",
             "End Sub"]
+
+
+def gen_magnet_timer(m):
+    return [
+        "",
+        "' Node 10 mode 3 arms the physical magnet; the success switch follows a captured ball.",
+        "Dim PadMagnetMode : PadMagnetMode = -1",
+        "Dim PadMagnetGrabbed : PadMagnetGrabbed = False",
+        "Dim PadCoffinDown : PadCoffinDown = False",
+        "Sub PadUpdateMagnetPower()",
+        "\tIf Not IsObject(HMag) Then Exit Sub",
+        "\tDim grabbing : grabbing = (PadMagnetMode = 3 And Not PadCoffinDown)",
+        "\tHMag.GrabCenter = grabbing",
+        "\tHMag.MagnetOn = grabbing",
+        "End Sub",
+        "Sub PadMagnetTimer_Timer()",
+        "\tIf Not IsObject(HMag) Then Exit Sub",
+        "\tDim mode, grabbing, grabbed, ball, dx, dy",
+        "\tmode = Controller.GetMech(%d)" % m["magnet_mode_mech"],
+        "\tgrabbing = (mode = 3 And Not PadCoffinDown)",
+        "\tIf mode <> PadMagnetMode Then",
+        "\t\tPadMagnetMode = mode",
+        "\t\tPadUpdateMagnetPower",
+        "\t\tController.Switch(1103) = ((mode And 1) <> 0)",
+        "\t\tController.Switch(1104) = ((mode And 2) <> 0)",
+        "\tEnd If",
+        "\t' Ignore physics jitter after a successful grab until the ball leaves or is released.",
+        "\tIf PadMagnetGrabbed And grabbing And sw63.BallCntOver > 0 Then Exit Sub",
+        "\tgrabbed = False",
+        "\tIf grabbing Then",
+        "\t\tFor Each ball In HMag.Balls",
+        "\t\t\tdx = ball.X - HMag.X : dy = ball.Y - HMag.Y",
+        "\t\t\tIf dx * dx + dy * dy <= 1 And ball.VelX ^ 2 + ball.VelY ^ 2 <= 1 Then",
+        "\t\t\t\tgrabbed = True",
+        "\t\t\t\tExit For",
+        "\t\t\tEnd If",
+        "\t\tNext",
+        "\tEnd If",
+        "\tIf grabbed <> PadMagnetGrabbed Then",
+        "\t\tController.Switch(1102) = grabbed",
+        "\t\tPadMagnetGrabbed = grabbed",
+        "\tEnd If",
+        "End Sub",
+    ]
 
 
 def retrofit_items(table, m):

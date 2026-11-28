@@ -19,10 +19,13 @@ class PreparedLaunchTest(unittest.TestCase):
         redirected = patch.object(play.padlaunch, "LOG", str(Path(logs.name) / "controller.log"))
         redirected.start()
         self.addCleanup(redirected.stop)
-        self.select_target = play.vpx_lcd.fullscreen_target
-        display = patch.object(play.vpx_lcd, "fullscreen_target", return_value=None)
-        self.fullscreen_target = display.start()
+        self.select_target = play.vpx_lcd.placement_target
+        display = patch.object(play.vpx_lcd, "placement_target", return_value=None)
+        self.placement_target = display.start()
         self.addCleanup(display.stop)
+        overlay = patch.object(play.vpx_lcd, "windowed_overlay", return_value=False)
+        self.windowed_overlay = overlay.start()
+        self.addCleanup(overlay.stop)
 
     def test_raw_image_detection_prefers_a_unique_title_match(self):
         with TemporaryDirectory() as folder:
@@ -110,6 +113,20 @@ class PreparedLaunchTest(unittest.TestCase):
         self.assertEqual(env["PAD_SELECT"], "0")
         self.assertEqual(env["PAD_VPX_PERSIST"], "1")
 
+    def test_controller_launch_uses_persistent_saves_on_the_installed_runtime(self):
+        mod = play.padlaunch
+        with patch.object(mod.padpath, "to_wsl", side_effect=lambda path, _: path), \
+                patch.object(mod, "win_python", return_value=None):
+            for distro in (mod.RUNTIME_DISTRO, "Other-Linux"):
+                with self.subTest(distro=distro):
+                    launch = mod.Launch("godzilla_le", "/cards/godzilla.raw", dist=distro)
+                    launch.slot = 1
+                    launch.board_env = Mock(return_value=[])
+                    launch.cache_env = Mock(return_value=[])
+                    env = dict(value.split("=", 1) for value in launch.env())
+                    self.assertEqual(env.get("PAD_VPX_PERSIST"), "1" if distro == mod.RUNTIME_DISTRO else None)
+                    self.assertNotIn("PAD_SELECT", env)
+
     def test_card_prepares_the_guest_filesystem_before_starting_the_rig(self):
         mod = play.padlaunch
         with patch.object(mod.padpath, "to_wsl", return_value="/mnt/c/Game Card.raw"), \
@@ -147,6 +164,27 @@ class PreparedLaunchTest(unittest.TestCase):
                                      ["notice", "watch"] if state in ("room", "evict", "copying") else ["watch"])
                     if events.notice.called:
                         self.assertIn("longer than usual", events.notice.call_args.args[0])
+
+    def test_cache_progress_reads_only_complete_lines_from_the_current_run(self):
+        mod = play.padlaunch
+        with patch.object(mod.padpath, "to_wsl", return_value="/rig"), \
+                patch.object(mod, "distro", return_value="SPIKE2-VPX"):
+            activity = Mock()
+            launch = mod.Launch("godzilla_le", "/card.raw", activity=activity)
+            log = Path(launch.logfile)
+            old_run = b"[card] copying card.raw: 99 / 100 MB (99%)\n"
+            log.write_bytes(old_run + b"[card] copying card.raw: 25 / 100 MB (25%)")
+            launch.cache_log_offset = len(old_run)
+            launch.poll_cache_progress()
+            activity.assert_not_called()
+            with log.open("ab") as stream:
+                stream.write(b"\n")
+            launch.poll_cache_progress()
+            activity.assert_called_once_with("Copying the SD-card image into the cache…", 25 * 2**20, 100 * 2**20)
+            with log.open("ab") as stream:
+                stream.write(b"[card] local cache ready - booting from it\n")
+            launch.poll_cache_progress()
+            activity.assert_called_with("Starting Stern from the local cache…")
 
     def test_arm_repair_failure_stops_before_card_extraction(self):
         mod = play.padlaunch
@@ -188,7 +226,7 @@ class PreparedLaunchTest(unittest.TestCase):
         launch = Mock(title="godzilla_le", slot=1, label="PAD-VPX-100")
         rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/1/root")
         target = (-1920, -90, 0, 990)
-        self.fullscreen_target.return_value = target
+        self.placement_target.return_value = target
         launch.start.side_effect = lambda: self.assertEqual(launch.windows_lcd, target)
         with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
                 patch.object(play, "wait_for_rig", return_value=rig), \
@@ -200,6 +238,33 @@ class PreparedLaunchTest(unittest.TestCase):
         placement.assert_called_once_with(launch, target)
         placement.return_value.close.assert_called_once_with()
         launch.stop.assert_called_once_with()
+
+    def test_windowed_lcd_uses_composited_vpx_and_lifetime_overlay(self):
+        launch = Mock(title="godzilla_le", slot=1)
+        rig = SimpleNamespace(distro="SPIKE2-VPX", root="/slots/1/root")
+        self.windowed_overlay.return_value = True
+        with patch.object(play.padcontroller.Rig, "board_run", return_value=None), \
+                patch.object(play, "wait_for_rig", return_value=rig), \
+                patch.object(play, "wait_for_game"), \
+                patch.object(play.vpx_lcd, "Placement") as placement, \
+                patch.object(play.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, create=True), \
+                patch.object(play.subprocess, "Popen") as popen:
+            play.play(launch, Path("VPinballX64.exe"), Path("table.vpx"), 30)
+        self.assertEqual(popen.call_args.args[0],
+                         ["VPinballX64.exe", "-ExtMinimized", "-DisableTrueFullscreen", "-play", "table.vpx"])
+        self.assertIsNone(launch.windows_lcd)
+        placement.assert_called_once_with(launch, None)
+        placement.return_value.close.assert_called_once_with()
+
+    def test_windowed_overlay_raises_without_moving_resizing_or_activating(self):
+        lcd = play.vpx_lcd
+        user32 = Mock()
+        lcd.Placement.keep_on_top(user32, 123)
+        hwnd, topmost, x, y, width, height, flags = user32.SetWindowPos.call_args.args
+        self.assertEqual(hwnd.value, 123)
+        self.assertEqual(topmost.value, lcd.ctypes.c_void_p(-1).value)
+        self.assertEqual((x, y, width, height), (0, 0, 0, 0))
+        self.assertEqual(flags, lcd.SWP_NOSIZE | lcd.SWP_NOMOVE | lcd.SWP_NOACTIVATE | lcd.SWP_ASYNCWINDOWPOS)
 
     def test_disabling_b2s_uses_and_removes_a_session_only_vpx_ini(self):
         launch = Mock(title="godzilla_le", slot=2)
@@ -244,6 +309,8 @@ class PreparedLaunchTest(unittest.TestCase):
                 self.assertEqual(self.select_target(folder), (-1024, -150, 0, 618))
                 self.assertEqual(play.padcontroller.lcd_rect({"monitor": 3}, play.padcontroller.monitors()),
                                  (-1024, -150, 1024, 768))
+                path.write_text("game mode=region monitor=3 border=0 rx=0 ry=96 w=1024 h=576\n")
+                self.assertEqual(self.select_target(folder), (-1024, -54, 0, 522))
 
     def test_fullscreen_compensates_for_measured_wslg_frame_insets(self):
         with TemporaryDirectory() as folder:

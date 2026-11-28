@@ -218,7 +218,7 @@ if [ "$SINK" = win ]; then
     # makes a sound and NEVER OPENS THE SOCKET. The player then finds nothing to
     # connect to and the run is silent. padrelay.py listens first and opens the
     # FIFO only once a player has attached.
-    python3 "$(dirname "$0")/padrelay.py" "$FIFO" "$PORT" &
+    python3 "$(dirname "$0")/padrelay.py" "$FIFO" "$PORT" "" "$CH" &
     SRV=$!
 
     # TEARING DOWN A WINDOWS CHILD. The player is a native Windows process

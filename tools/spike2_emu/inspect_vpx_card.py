@@ -4,8 +4,14 @@ import json
 import os
 import re
 import sys
+from uuid import uuid4
 
 import parts
+
+
+def imported_image_name(title):
+    """Name an app-owned RAW using the title returned by inspect()."""
+    return f"{title[:200]}-{uuid4().hex}.raw"
 
 
 def inspect(path):

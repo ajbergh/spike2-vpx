@@ -27,6 +27,9 @@ fi
 # THE LEASE (riglock.sh): a Stop on a slot another session is using now would
 # end ITS run - refused; ours, or free, and the Stop goes ahead.
 pad_slot_use stop || exit 1
+# Record intent before any process disappears. Keep this until the next run
+# so watch.sh can still see it while the stop script is finishing.
+touch "$PAD_LOGDIR/stop-requested" 2>/dev/null || true
 #
 # THE COUNTING LIVES IN alive.sh, NOT HERE. This script used to keep its own
 # copy of the process list, and the two drifted: alive.sh grew the audio player
