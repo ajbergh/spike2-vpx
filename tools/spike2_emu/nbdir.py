@@ -79,7 +79,7 @@ this file chooses, per node:
 Output (default $PAD_TABLES-style tables dir is the caller's business; this
 writes wherever --out points):
 
-    # nbdir v2 elf=<basename> nodes=<n> src=<what it was built from>
+    # nbdir v3 elf=<basename> nodes=<n> src=<what it was built from>
     node=1 type=pinnode code=2 part=0x00020023 class=1 variant=0x01 fw=0x011d00 hexver=1.29.0 hex=... group=5 name=CABINET
     ...
     # skipped node=5 type=magsensornode reason=no-usable-class
@@ -99,8 +99,8 @@ import re
 import struct
 import sys
 
-#: The table's first line, and its version: v2 added group= and name= (PAD-500).
-HEADER = "# nbdir v2"
+#: v3 adds LPC812 Mag Sensor identities, which were skipped in earlier tables.
+HEADER = "# nbdir v3"
 
 # Known type-name strings (the game's own 43-entry type table carries these;
 # search anchors, not an exhaustive claim about what exists).
@@ -123,6 +123,7 @@ PART_BY_CLASS = {
                      #   pinnode identity manufactured its RUNTIME INFO grade.
     4: 0x00140040,   # LPC1124_303  (node4)
     5: 0x2C40102B,   # LPC1313      (ws2812node, coil4node, ...)
+    6: 0x00008121,   # LPC812M101JD20, measured in Metallica Remastered's descriptor table
 }
 CLASS_NAMES = {1: "LPC1112_101", 2: "LPC1112_201", 3: "LPC1113_302",
                4: "LPC1124_303", 5: "LPC1313", 6: "LPC812", 7: "RP235x"}
@@ -204,6 +205,7 @@ CLASS_PREF = {
     "ws2812node": (5,),
     "node4":      (4,),
     "coil4node":  (5, 1),
+    "magsensornode": (6,),
     "lcdnode":    (3,),      # the only class any card ships it in (item 82);
                              # variant stays a marked GUESS until hexreg or a
                              # live registry read measures it
@@ -478,6 +480,22 @@ def board_groups(elf, rx, rw, full):
     return out
 
 
+def mag_sensor_variant(path):
+    """Read the variant from a validated Intel HEX type 06 firmware header."""
+    try:
+        with open(path, encoding="ascii") as firmware:
+            line = firmware.readline(128).strip()
+        if not line.startswith(":"):
+            return None
+        record = bytes.fromhex(line[1:])
+    except (OSError, ValueError):
+        return None
+    if len(record) != 21 or record[:4] != b"\x10\x00\x00\x06" or sum(record) & 0xff:
+        return None
+    # The firmware reader transforms some header fields, but leaves byte 14 intact.
+    return record[4 + 14]
+
+
 def derive(elf_path, hexdir, boards=None):
     """(rows, skipped) for this title's node directory. Pass a dict as
     `boards` to have it filled with board_groups() from the same walk."""
@@ -528,6 +546,12 @@ def derive(elf_path, hexdir, boards=None):
         # too; nothing special-cases it any more.
         var = VARIANT_PRIOR.get(typ, VARIANT_DEFAULT)
         guess = typ not in VARIANT_PRIOR
+        if typ == "magsensornode":
+            var = mag_sensor_variant(os.path.join(hexdir, fname))
+            if var is None:
+                skipped.append((nid, code, "invalid Mag Sensor firmware header"))
+                continue
+            guess = False
         # THE STERN PART NUMBER of the board the directory expects here, from
         # the catalog row of its type (item 67). The shim answers it in the
         # f9 00 runtime-info reply; mando_le renders its holographic topper
@@ -602,8 +626,7 @@ def reuse(existing, out, elf_path, hexdir):
     try:
         with io.open(existing, "r", encoding="ascii", errors="replace") as f:
             head = f.readline()
-            # a v1 table has no group=/name= (PAD-500): derive once, so the
-            # playfield's cabinet lights can find their boards
+            # Older versions lack current board metadata or identity support.
             if not head.startswith(HEADER + " "):
                 return False
             if head.partition(" src=")[2].rstrip("\n") != want:

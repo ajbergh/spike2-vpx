@@ -115,7 +115,7 @@ VERSION = "03060000"            # what core.vbs compares; modulated solenoids of
 
 SW_SRC = "v"                    # padsw.h's writer tag for Visual Pinball
 POLL_S = 0.008                  # padled poll; a 9p read is ~1-3 ms
-READ_N = max(coilmap.HI_READ, coilmap.STEP_READ)   # one read takes every plane
+READ_N = max(coilmap.HI_READ, coilmap.MAG_MODE_READ)   # one read takes every plane
 LAMP_ON = int(os.environ.get("PAD_VPX_LAMP_ON", "1"))   # LED level that is "lit"
 MIN_PULSE_MS = 40               # a coil pulse shorter than a poll still shows
 FRONT_WATCH_S = 300             # how long after Run a started run's windows are watched
@@ -479,6 +479,7 @@ class VpxMap:
         self.game_on = None                 # (number, [coils]) "flippers armed"
         self.cabinet = {}                   # cabinet switch names -> 1000+id
         self.mechs = {}                     # GetMech(n) -> (node, motor) of a stepper (PAD-1228)
+        self.magnet_mode_mech = None
         self.platform = "spike2"            # which rig the title runs on (PAD-943)
         # core.vbs indexes SolCallback(68) and friends by the number it is
         # handed, so ChangedSolenoids may only carry numbers up to this; a
@@ -547,6 +548,7 @@ class VpxMap:
         for k, v in m.get("mechs", {}).items():
             if k != "_":
                 self.mechs[int(k)] = (int(v["stepper"][0]), int(v["stepper"][1]))
+        self.magnet_mode_mech = m.get("magnet_mode_mech")
         self._load_dof(m)
 
     def _load_dof(self, m):
@@ -3353,6 +3355,8 @@ class Bridge:
                 pos = coilmap.stepper(data, node, motor)
                 if pos is not None:
                     self.mech_pos[n] = pos
+            if self.map.magnet_mode_mech is not None:
+                self.mech_pos[self.map.magnet_mode_mech] = coilmap.mag_sensor_mode(data)
             if self.dof and self.dof.up:
                 self._poll_dof(data)
             if self.b2s and self.b2s.up:
@@ -3567,10 +3571,7 @@ class Bridge:
             return bool(self.sol_state.get(int(n or 0), 0))
 
     def get_mech(self, n):
-        """Controller.GetMech(n): the place of the stepper the map's `mechs`
-        names for n, in steps from home; 0 until the game first homes or moves
-        it, and for a number the map does not name (VPinMAME's answer for a
-        mech a ROM lacks)."""
+        """Controller.GetMech(n): a mapped stepper position or magnet mode, defaulting to 0."""
         try:
             n = int(n or 0)
         except (TypeError, ValueError):

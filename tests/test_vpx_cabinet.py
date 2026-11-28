@@ -4,6 +4,7 @@ button lights to DOF as E events, BACKBOX GI to the backglass bulbs picked."""
 import json
 import os
 import shutil
+import struct
 import sys
 import xml.etree.ElementTree as ET
 
@@ -221,6 +222,33 @@ def test_metallica_uses_the_mag_sensor_node_for_coffin_inputs_and_coils(tmp_path
         assert mapping.switch_id(sam) == mapping.switch_id(1000 + spike) == spike
     assert mapping.coil(51) == (10, 1)
     assert mapping.coil(52) == (10, 0)
+
+
+def test_metallica_bridge_reports_the_requested_magnet_mode(tmp_path, monkeypatch):
+    pc = pytest.importorskip("padcontroller")
+    monkeypatch.setattr(pc, "USER_MAPS", str(tmp_path))
+    bridge = pc.Bridge()
+    bridge.set_game("metallica_spike")
+
+    class Rig:
+        def led_path(self):
+            return "padled"
+
+        def sw_path(self):
+            return "padsw"
+
+    bridge.rig = Rig()
+    data = bytearray(pc.READ_N)
+    data[:4] = b"PLED"
+    struct.pack_into("<I", data, pc.coilmap.STEP_READ, 3)
+    monkeypatch.setattr(pc, "read_block", lambda path, size: data if path == "padled" else None)
+    for version, expected in ((8, 0), (9, 3)):
+        struct.pack_into("<I", data, 4, version)
+        bridge._poll_once()
+        assert bridge.get_mech(1) == expected
+    struct.pack_into("<I", data, pc.coilmap.STEP_READ, 0)
+    bridge._poll_once()
+    assert bridge.get_mech(1) == 0
 
 
 def _data(pc, levels):

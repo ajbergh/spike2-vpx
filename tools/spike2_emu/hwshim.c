@@ -6136,6 +6136,7 @@ static unsigned nb_hexreg_class(unsigned part)
                                                  * descriptor table, item 82 */
     if (part == 0x00140040u) return 4;          /* LPC1124_303 */
     if (part == 0x2c40102bu) return 5;          /* LPC1313     */
+    if (part == 0x00008121u) return 6;          /* LPC812M101JD20 */
     return 0;
 }
 
@@ -12304,6 +12305,7 @@ struct padled_shm {
      * padled.h, which carries the meaning; keep the two in step. */
     unsigned char step_cfg[16];
     int step_pos[16][4];
+    unsigned mag_mode;               /* v9: mode from the Mag Sensor board's cmd 50 */
 };
 #define PADLED_MAGIC 0x44454c50u
 
@@ -12396,11 +12398,11 @@ static void led_map(void)
     led_shm->magic = PADLED_MAGIC;
     /* 4 adds the addressed plane, 5 the coil drive block (PAD-381), 6 the
      * strip boards' banks past the first (PAD-500), 7 each coil's firing rule
-     * (PAD-775), 8 each stepper's place (PAD-1228); see padled.h. A reader
+     * (PAD-775), 8 each stepper's place (PAD-1228), 9 the Mag Sensor mode. A reader
      * tells them apart by this number, so it must not claim one over a
-     * mapping too small to hold it: 4 and 5 fit in two pages, 6 to 8 need
+     * mapping too small to hold it: 4 and 5 fit in two pages, 6 through 9 need
      * four. */
-    led_shm->version = (led_shm_len >= 16384) ? 8 : (led_shm_len >= 8192) ? 5 : 3;
+    led_shm->version = (led_shm_len >= 16384) ? 9 : (led_shm_len >= 8192) ? 5 : 3;
 }
 
 /* ★ A BANKED STRIP FRAME'S LEVELS, INTO VERSION 6's `hi` PLANE (PAD-500).
@@ -12642,6 +12644,17 @@ static void led_motor_publish(const unsigned char *p, int n)
     static int budget = 40;
     if (n < 6 || !(p[0] & 0x80) || p[2] != 0x50) return;
     node = p[0] & 0x3f;
+    if (n == 11 && p[1] == 8 && p[3] <= 3) {
+        const struct nb_ident *id = nb_ident_for(node);
+        if (id && id->tcrc == nb_hexreg_crc("magsensornode")) {
+            /* Metallica's Magnet + Lock Sequence Test sends mode 3 for Grab
+             * and mode 0 for Off. This longer frame is separate from cmd 50's motor form. */
+            led_map();
+            if (led_shm && led_shm_len >= 16384)
+                led_shm->mag_mode = p[3];
+            return;
+        }
+    }
     a = p[3];
     b = p[4];
     v = p[5];

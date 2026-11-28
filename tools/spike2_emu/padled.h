@@ -45,7 +45,7 @@
 #define PADLED_H
 
 #define PADLED_MAGIC   0x44454c50u      /* 'PLED' */
-#define PADLED_VERSION 8
+#define PADLED_VERSION 9
 
 /* Node ids run to 14 and index to 95, so a flat [16][96] covers every board
  * with room to spare and needs no per-node base to get wrong. */
@@ -209,6 +209,7 @@ struct padled_shm {
      * step_cfg 16072, step_pos 16088 (coilmap.STEP_*). */
     unsigned char step_cfg[PADLED_NODES];
     int step_pos[PADLED_NODES][4];
+    unsigned mag_mode;            /* version 9: mode from the Mag Sensor board's cmd 50 */
 };
 
 #endif

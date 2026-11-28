@@ -209,7 +209,7 @@ def patch_script(src, m):
         raise SystemExit("the script is not the one this patcher knows: no %s" % ", ".join(sorted(missing)))
 
     text = "\n".join(out)
-    text += "\n".join([""] + gen_lamp_block(m) + gen_test_timer() + [""])
+    text += "\n".join([""] + gen_lamp_block(m) + gen_magnet_timer(m) + gen_test_timer() + [""])
     rep.append("literal switch numbers rewritten: %d; left on SAM numbers (no Spike 2 switch): %d"
                % (rewritten, dropped))
     return text, rep
@@ -324,6 +324,42 @@ def gen_test_timer():
             "\tf.Close",
             "\tfso.DeleteFile p",
             "End Sub"]
+
+
+def gen_magnet_timer(m):
+    return [
+        "",
+        "' Node 10 mode 3 arms the physical magnet; the success switch follows a captured ball.",
+        "Dim PadMagnetMode : PadMagnetMode = -1",
+        "Dim PadMagnetGrabbed : PadMagnetGrabbed = False",
+        "Sub PadMagnetTimer_Timer()",
+        "\tIf Not IsObject(HMag) Then Exit Sub",
+        "\tDim mode, grabbing, grabbed, ball, dx, dy",
+        "\tmode = Controller.GetMech(%d)" % m["magnet_mode_mech"],
+        "\tgrabbing = (mode = 3)",
+        "\tIf mode <> PadMagnetMode Then",
+        "\t\tHMag.GrabCenter = grabbing",
+        "\t\tHMag.MagnetOn = grabbing",
+        "\t\tController.Switch(1103) = ((mode And 1) <> 0)",
+        "\t\tController.Switch(1104) = ((mode And 2) <> 0)",
+        "\t\tPadMagnetMode = mode",
+        "\tEnd If",
+        "\tgrabbed = False",
+        "\tIf grabbing Then",
+        "\t\tFor Each ball In HMag.Balls",
+        "\t\t\tdx = ball.X - HMag.X : dy = ball.Y - HMag.Y",
+        "\t\t\tIf dx * dx + dy * dy <= 1 And ball.VelX ^ 2 + ball.VelY ^ 2 <= 1 Then",
+        "\t\t\t\tgrabbed = True",
+        "\t\t\t\tExit For",
+        "\t\t\tEnd If",
+        "\t\tNext",
+        "\tEnd If",
+        "\tIf grabbed <> PadMagnetGrabbed Then",
+        "\t\tController.Switch(1102) = grabbed",
+        "\t\tPadMagnetGrabbed = grabbed",
+        "\tEnd If",
+        "End Sub",
+    ]
 
 
 def retrofit_items(table, m):

@@ -81,6 +81,7 @@
   },
 
   "solenoid_max": 68,
+  "magnet_mode_mech": 1,
   "solenoids": {
     "_": [
       "Spike 2 coil [node, index] -> the SMALL number the table script sees it as: the SAM",
@@ -209,7 +210,8 @@
     "lights": ["GI134", "GI136"]
   },
   "retrofit_timers": {
-    "_": "PadTestTimer feeds %TEMP%\\padvpx_keys.txt to the table's key handlers: scripted keys for a test run",
+    "_": "PadMagnetTimer applies the Mag Sensor mode and reports the ball capture. PadTestTimer feeds scripted keys to the table.",
+    "PadMagnetTimer": {"clone": "UpdateTroughTimer", "interval_ms": 10},
     "PadTestTimer": {"clone": "UpdateTroughTimer", "interval_ms": 100}
   },
   "unmapped": {

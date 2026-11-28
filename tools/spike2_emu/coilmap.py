@@ -848,6 +848,16 @@ STEPPERS = 4
 STEP_CFG_OFF = RULE_READ
 STEP_POS_OFF = STEP_CFG_OFF + NODES
 STEP_READ = STEP_POS_OFF + NODES * STEPPERS * 4
+MAG_MODE_READ = STEP_READ + 4
+
+
+def mag_sensor_mode(data):
+    """Current magnet mode, or idle for runs without a version 9 output block."""
+    if data is None or len(data) < MAG_MODE_READ or not has_magic(data):
+        return 0
+    if struct.unpack_from("<I", data, 4)[0] < 9:
+        return 0
+    return struct.unpack_from("<I", data, STEP_READ)[0]
 
 
 def stepper(data, node, motor):
