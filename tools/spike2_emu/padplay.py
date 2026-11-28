@@ -220,6 +220,7 @@ def main():
         with lock:
             have = len(buf)
             n = min(need, have)
+            n -= n % frame  # TCP reads can end in the middle of a PCM frame.
             chunk = bytes(buf[:n]) if n else b""
             if n:
                 del buf[:n]
@@ -280,7 +281,9 @@ def main():
         # WSL localhost proxy can then be recovered by the shell's restart
         # loop. The native FIFO can legitimately be quiet indefinitely.
         fed_last = (stats["fed"], time.monotonic())
-        while not done.is_set() or len(buf) > 0:
+        # Only complete frames can drain after EOF. A truncated final frame
+        # must not keep the playback process alive.
+        while not done.is_set() or len(buf) >= frame:
             time.sleep(0.25)
             poll_gain()
             now = time.monotonic()

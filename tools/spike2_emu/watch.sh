@@ -39,6 +39,8 @@ pad_slot_ready || exit 1
 # start - another session's run in it is not ours to boot on top of.
 pad_slot_use run || exit 1
 mkdir -p "$PAD_LOGDIR" 2>/dev/null && pad_give_back "$PAD_LOGDIR"
+STOP_REQUEST="$PAD_LOGDIR/stop-requested"
+rm -f "$STOP_REQUEST" 2>/dev/null
 # WHO this run is for, fixed once for the whole run and every child: every
 # window it opens puts it in the title bar (pad_title_tag), and the board's
 # run record carries it to the app and the triage dashboard.
@@ -2711,6 +2713,10 @@ echo "[watch] waiting for the game to start..."
 for i in $(seq 1 240); do
     pad_guest_up && break
     if ! [ -n "$(pad_pids -x padglhost)" ]; then
+        if [ -f "$STOP_REQUEST" ]; then
+            echo "[watch] stop requested; ending the run."
+            exit 0
+        fi
         echo "[watch] the renderer died while the game was starting:" >&2
         tail -20 "$HOSTLOG" >&2
         exit 1
@@ -3258,6 +3264,10 @@ while :; do
         fi
     fi
     if ! [ -n "$(pad_pids -x padglhost)" ]; then
+        if [ -f "$STOP_REQUEST" ]; then
+            echo "[watch] stop requested; ending the run."
+            break
+        fi
         # NOT "(window closed)" FOR EVERY WAY THE RENDERER CAN GO. This line
         # used to assert that, unconditionally, on nothing but "the process is
         # not there anymore" - so a renderer that DIED read in the log as a
@@ -3346,6 +3356,10 @@ while :; do
         fi
     fi
     if ! pad_guest_up; then
+        if [ -f "$STOP_REQUEST" ]; then
+            echo "[watch] stop requested; ending the run."
+            break
+        fi
         echo "[watch] the game exited. Last lines of its log:"
         tail -5 "$LOG"
         # THE CRASH REPORT LIVES IN game.out AND THE PANE CAN MISS IT: the
