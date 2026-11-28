@@ -8,10 +8,9 @@ import struct
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from uuid import uuid4
 
 import cardcopy
-from inspect_vpx_card import inspect
+from inspect_vpx_card import imported_image_name, inspect
 
 
 def receive(source, image, size, budget):
@@ -57,7 +56,7 @@ def import_card(source, directory, size, budget, expected):
                 return {"title": title}
             punch_unused(path, image)
             os.fsync(image.fileno())
-        destination = directory / (uuid4().hex + ".raw")
+        destination = directory / imported_image_name(title)
         windows_path = subprocess.check_output(["wslpath", "-w", str(directory)], text=True).strip()
         path.replace(destination)
     return {"title": title, "image": windows_path + "\\" + destination.name}

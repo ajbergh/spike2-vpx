@@ -23,6 +23,7 @@ from spike2_vpx_setup import APP, DISTRO, RIG, distro_registration
 import padisplay
 import padlaunch
 import cardcopy
+from inspect_vpx_card import imported_image_name
 import padlighting
 import padvpx
 import play_spike2
@@ -303,7 +304,7 @@ class Player:
                 self.check_image_title(game, expected)
                 storage.set_sparse(out, unused=cardcopy.unused_ranges(extracted))
                 os.fsync(out.fileno())
-            destination = directory / (uuid4().hex + ".raw")
+            destination = directory / imported_image_name(game.title)
             extracted.replace(destination)
         return replace(game, image=str(destination))
 

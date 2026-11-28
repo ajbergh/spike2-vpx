@@ -63,6 +63,7 @@ class SparseImportTest(unittest.TestCase):
 
             image, = library.iterdir()
             self.assertEqual(result["title"], "godzilla_le")
+            self.assertRegex(image.name, r"^godzilla_le-[0-9a-f]{32}\.raw$")
             self.assertTrue(result["image"].endswith("\\" + image.name))
             self.assertEqual(self.importer.inspect(image), "godzilla_le")
             self.assertEqual(image.stat().st_size, len(raw) - 1)

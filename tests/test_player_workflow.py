@@ -288,6 +288,7 @@ def test_zip_import_uses_the_installer_cache_and_preserves_sparse_image(player, 
     game, _ = player.prepare_image(source)
     image = Path(game.image)
     assert image.parent == cache / "SPIKE2-VPX-cardcache" / "imports"
+    assert image.name.startswith("godzilla_le-")
     assert list(image.parent.iterdir()) == [image]
     assert image.stat().st_file_attributes & stat.FILE_ATTRIBUTE_SPARSE_FILE
     assert image.read_bytes() == b"x" * block + bytes(2 * block)

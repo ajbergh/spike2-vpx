@@ -105,11 +105,11 @@ directly in **Import image**. The app extracts the SD-card image for you, so
 you can skip unzipping the download. The ZIP must contain one `.raw` image.
 **Import image** also accepts an already extracted `.raw` file. You can select
 a ZIP on an SMB share using a UNC path or mapped drive. With **Cache images on
-first load** enabled, ZIP import saves one
-sparse image in `SPIKE2-VPX-cardcache\imports` under the cache folder selected
-in the installer. When the cache folder is blank, the app stores the image
-inside the local WSL runtime. The game starts from that image even when the
-share is disconnected. With caching disabled, ZIP import extracts a
+first load** enabled, ZIP import saves one sparse `.raw` named for the game, such
+as `foo_fighters_pro-<id>.raw`. It goes in `SPIKE2-VPX-cardcache\imports` under
+the cache folder selected in the installer. When that folder is blank, the app
+stores the image inside the local WSL runtime. The game starts from that
+image even when the share is disconnected. With caching disabled, ZIP import extracts a
 RAW into the app's Windows data folder. You can also select a folder of raw
 images to add multiple local cards.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
