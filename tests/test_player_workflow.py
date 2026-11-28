@@ -102,6 +102,66 @@ def test_rejects_prepared_table_for_another_edition(player, tmp_path, monkeypatc
     assert not player.library()
 
 
+@pytest.mark.parametrize(("release", "expected"), [
+    ("6.1.0", "deadpool_pro"), ("7.0.0", "deadpool_pro_v7"), ("9.9.9", None),
+])
+def test_deadpool_table_release_selects_the_matching_map(release, expected):
+    import padcontroller
+    import padlaunch
+    import padvpx
+
+    script = f'\' JP\'s Deadpool; jpsdeadpool\r\nConst myVersion = "{release}"\r\n'
+    matches = padvpx.fitting("table.vpx", script)
+    title, info = padvpx.choose(matches, title="deadpool_pro")
+    assert title == expected
+    if info:
+        assert padlaunch.game_for(title) == "deadpool_pro"
+        assert padcontroller.VpxMap(title).cabinet == padcontroller.VpxMap("deadpool_pro").cabinet
+    if release == "7.0.0":
+        assert info["output"] == "JP's Deadpool v700 (PAD).vpx"
+        assert any(row.table == "JP's Deadpool 7.0.0" for row in supported_tables())
+
+
+def test_prepared_deadpool_v7_requires_its_own_patch(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    table = tmp_path / "Deadpool (PAD).vpx"
+    table.touch()
+    script = 'Const myVersion = "7.0.0"\nController.GameName = "deadpool_pro"\nCreateObject("PAD.Controller")'
+    monkeypatch.setattr(module.play_spike2, "embedded_script", lambda _: script)
+    game = Game("deadpool_pro", "card.raw")
+    with pytest.raises(ValueError, match="different release"):
+        player.prepare_table(game, table, Mock())
+    script = script.replace('"deadpool_pro"', '"deadpool_pro_v7"')
+    assert player.prepare_table(game, table, Mock()).table == str(table)
+
+
+def test_batman_multiplayer_start_pulses_without_changing_other_key_handlers():
+    import padlaunch
+    import padvpx
+    import vpxshadow
+
+    mapping = padlaunch.table_map("batman")
+    script = """' b66_orig Daphishbowl and Mr H.
+Const myVersion = "1.1.0"
+Sub SceneMPSelect(keycode)
+    Table1_KeyDown(StartGameKey)
+End Sub
+Sub tmrVPXMP_Timer()
+    Table1_KeyDown(StartGameKey)
+    Table1_KeyDown(StartGameKey)
+End Sub
+Sub OtherTimer()
+    Table1_KeyDown(StartGameKey)
+End Sub"""
+    assert [title for title, _ in padvpx.fitting("table.vpx", script)] == ["batman"]
+    assert padvpx.fitting("table.vpx", script.replace("1.1.0", "9.9.9")) == []
+    lines = script.splitlines()
+    vpxshadow.pulse_scripted_start(lines, mapping, [])
+    assert lines.count("    vpmTimer.PulseSw 1036") == 2
+    assert lines.count("    Table1_KeyDown(StartGameKey)") == 1
+
+
 @pytest.mark.parametrize("existing_conversion", [False, True])
 def test_conversion_publishes_beside_source_and_saves_pairing(player, tmp_path, monkeypatch,
                                                             existing_conversion):

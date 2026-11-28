@@ -361,10 +361,14 @@ def main():
         table = args.table.resolve(strict=True)
         if not table.is_file() or table.suffix.lower() != ".vpx":
             raise ValueError("Pass a PAD-patched .vpx table.")
-        title = read_title(table)
+        script = embedded_script(table)
+        title = read_title(table, script)
         mapping = padlaunch.table_map(title)
         if not mapping or mapping.get("platform", "spike2") != "spike2":
             raise ValueError(f"No SPIKE 2 map was found for {title}.")
+        from padvpx import require_script_release
+
+        require_script_release(script, mapping)
         native_title = padlaunch.game_for(title)
         if not re.fullmatch(r"[A-Za-z0-9_-]+", native_title):
             raise ValueError(f"Invalid native SPIKE 2 game name in the map for {title}.")

@@ -413,6 +413,7 @@ class Player:
         mapping = padlaunch.table_map(title)
         if not mapping or padlaunch.game_for(title).casefold() != game.title:
             raise ValueError(f"This table is prepared for {title}. Choose a table for {game.name}.")
+        padvpx.require_script_release(script, mapping)
         if ("padspike2.vbs" in script.casefold()
                 and not (table.parent / "PADSPIKE2.vbs").is_file()):
             raise ValueError("PADSPIKE2.vbs is missing beside this table. Choose the original VPX file to prepare a new copy.")

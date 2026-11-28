@@ -170,7 +170,7 @@ def known_tables(tables_dir=None):
         if not info.get("listed", True):
             continue
         try:
-            m = json.load(open(info["map"], encoding="utf-8"))
+            m = padlaunch.read_table_map(info["map"])
         except (OSError, ValueError):
             m = {}
         t = m.get("table") or {}

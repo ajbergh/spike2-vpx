@@ -177,15 +177,32 @@ def _version_key(path):
 RUNTIME_DISTRO = "SPIKE2-VPX"
 
 
+def read_table_map(path):
+    """Read a map, optionally sharing the wiring from a sibling shadow map."""
+    with open(path, encoding="utf-8") as file:
+        mapping = json.load(file)
+    if not isinstance(mapping, dict):
+        raise ValueError("Expected a VPX map object.")
+    base = mapping.pop("base_map", None)
+    if base is None:
+        return mapping
+    if not isinstance(base, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+\.shadow\.json", base):
+        raise ValueError("A shared VPX map must name a sibling shadow map.")
+    with Path(path).with_name(base).open(encoding="utf-8") as file:
+        wiring = json.load(file)
+    if not isinstance(wiring, dict) or "base_map" in wiring:
+        raise ValueError("A shared VPX base map must contain its own wiring.")
+    return {**wiring, **mapping}
+
+
 def table_map(title):
     """Map metadata in PAD.Controller's user/kit lookup order."""
     if title:
         for directory in (USER_MAPS, HERE):
             for suffix in (".vpxmap.json", ".shadow.json"):
                 try:
-                    with open(os.path.join(directory, title + suffix), encoding="utf-8") as f:
-                        m = json.load(f)
-                    if isinstance(m, dict) and (m.get("platform") or "spike2").lower() == "spike2":
+                    m = read_table_map(os.path.join(directory, title + suffix))
+                    if (m.get("platform") or "spike2").lower() == "spike2":
                         return m
                 except (OSError, ValueError):
                     pass

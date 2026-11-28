@@ -501,7 +501,7 @@ class VpxMap:
                 break
 
     def load(self, path):
-        m = json.load(open(path, encoding="utf-8"))
+        m = padlaunch.read_table_map(path)
         game = m.get("game")
         self.game = game if isinstance(game, str) and game else self.title
         if (m.get("platform") or "spike2").lower() != "spike2":

@@ -44,7 +44,7 @@ def maps():
     out = {}
     for f in sorted(os.listdir(HERE)):
         if f.endswith(".shadow.json") or f.endswith(".vpxmap.json"):
-            m = json.load(open(os.path.join(HERE, f), encoding="utf-8"))
+            m = padlaunch.read_table_map(os.path.join(HERE, f))
             if (m.get("platform") or "spike2").lower() != "spike2":
                 continue
             title = m.get("title") or f.split(".")[0]
@@ -74,6 +74,25 @@ def card_title(card):
     return m.group(1).lower() if m else None
 
 
+def matches_script_release(script, mapping):
+    """Check the table's own release constant when the map specifies one."""
+    release = (mapping.get("table") or {}).get("script_version")
+    if not release:
+        return True
+    constant = re.escape(release["constant"])
+    pattern = (rf'^[ \t]*(?:(?:public|private)[ \t]+)?const[ \t]+{constant}'
+               r'[ \t]*=[ \t]*"([^"\r\n]+)"[ \t]*(?:\'[^\r\n]*)?\r?$')
+    found = re.findall(pattern, script, re.IGNORECASE | re.MULTILINE)
+    return len(found) == 1 and found[0] in release["values"]
+
+
+def require_script_release(script, mapping):
+    if not matches_script_release(script, mapping):
+        raise ValueError("This table declares a different release than the patch supports. "
+                         "Select the original VPX table to prepare it again, "
+                         f"or choose {mapping['table']['name']} from Supported Tables.")
+
+
 def fitting(table_path, script=None):
     """The titles whose map fits this table, preferred first: every `detect`
     word of the map is in the table's script and none of its `detect_not`
@@ -85,12 +104,13 @@ def fitting(table_path, script=None):
         from play_spike2 import embedded_script
 
         script = embedded_script(table_path)
-    script = script.lower()
+    lower_script = script.lower()
     out = []
     for title, info in maps().items():
         words = [w.lower() for w in info["detect"]]
-        if (words and all(w in script for w in words)
-                and not any(w.lower() in script for w in info.get("detect_not", []))):
+        if (words and all(w in lower_script for w in words)
+                and not any(w.lower() in lower_script for w in info.get("detect_not", []))
+                and matches_script_release(script, info)):
             out.append((title, info))
     return out
 

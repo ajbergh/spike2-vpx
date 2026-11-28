@@ -149,7 +149,7 @@ separately at startup. [Device-table lighting survey](tools/spike2_emu/cablights
 | Batman ’66 | Batman ’66 (`batman`) | [Batman 66 1.1.0](https://vpuniverse.com/files/file/6868-batman-66-stern-tribute/) | Unverified |
 | The Beatles | The Beatles (`beatles`) | [The Beatles (Original 2018) v007](https://orbitalpin.com/downloads/) | Unverified |
 | Black Knight: Sword of Rage | LE | [Black Knight Sword Of Rage LE](https://vpuniverse.com/files/file/32118-black-knight-sword-of-rage-stern-2019/) | Unverified |
-| Deadpool | Pro | [JP’s Deadpool 6.10](https://www.vpforums.org/index.php?app=downloads&showfile=15967) | Topper |
+| Deadpool | Pro | [JP’s Deadpool 7.0.0 or 6.1.0](https://www.vpforums.org/index.php?app=downloads&showfile=15967) | Topper |
 | Foo Fighters | Pro, LE | [JP’s Foo Fighters 0.5.0](https://www.vpforums.org/index.php?app=downloads&showfile=19519) | Speakers |
 | Godzilla | LE | [Godzilla Limited Edition v2.6](https://vpuniverse.com/files/file/8449-godzilla-limited-edition/) | Topper |
 | Guardians of the Galaxy | Pro, LE | [Guardians of the Galaxy 2.1.1](https://vpuniverse.com/files/file/6127-guardians-of-the-galaxy/) | Unverified |
