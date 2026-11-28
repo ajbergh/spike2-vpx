@@ -532,6 +532,59 @@ def test_moved_image_can_restore_the_saved_pairing(player, tmp_path):
     assert game.table == old.table
 
 
+def test_newer_compact_card_replaces_the_pairing_and_retires_only_the_old_import(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "cache"
+    imports = cache / "imports"
+    imports.mkdir(parents=True)
+    monkeypatch.setattr(module.storage, "cache_folders", lambda _: (cache,))
+    title = "godzilla_le"
+    old = Game(title, str(imports / module.imported_image_name(title)), "table.vpx", "1.9.0", favorite=True)
+    new = Game(title, str(imports / module.imported_image_name(title)), image_version="1.10.0")
+    source = tmp_path / "original.zip"
+    original_raw = tmp_path / module.imported_image_name(title)
+    for path in (Path(old.image), Path(new.image), source, original_raw):
+        path.touch()
+    player.save(old)
+    player.save(Game("godzilla_pro", str(original_raw), image_version="1.8.0"))
+
+    with monkeypatch.context() as failed:
+        failed.setattr(player.setup, "save", Mock(side_effect=OSError("save failed")))
+        with pytest.raises(OSError, match="save failed"):
+            player.install_image(new)
+        assert Path(old.image).is_file()
+    player.setup.settings = json.loads(player.setup.settings_path.read_text(encoding="utf-8"))
+
+    saved, retired = player.install_image(new)
+    assert (saved.image, saved.table, saved.favorite, retired) == (new.image, old.table, True, "1.9.0")
+    assert saved in player.library()
+    assert not Path(old.image).exists()
+    assert all(path.is_file() for path in (Path(new.image), source, original_raw))
+
+
+def test_explicit_replacement_keeps_an_active_import_and_another_version(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    cache = tmp_path / "cache"
+    imports = cache / "imports"
+    imports.mkdir(parents=True)
+    monkeypatch.setattr(module.storage, "cache_folders", lambda _: (cache,))
+    game = []
+    for version in ("1.9.0", "1.10.0", "1.8.0"):
+        image = imports / module.imported_image_name("godzilla_le")
+        image.touch()
+        game.append(Game("godzilla_le", str(image), image_version=version))
+    old, new, separate = game
+    player.save(old)
+    player.save(separate)
+    monkeypatch.setattr(module.sessions, "records", lambda *_: iter([object()]))
+    saved, retired = player.install_image(new, previous=old)
+    assert saved == new and not retired
+    assert player.library() == [new, separate]
+    assert all(Path(row.image).is_file() for row in game)
+
+
 def test_recovery_requires_an_expired_owned_record_and_no_live_processes(player, monkeypatch):
     from spike2_vpx import sessions
 

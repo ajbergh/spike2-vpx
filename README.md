@@ -29,7 +29,7 @@ VPX table.
 [Pinball Asset Decryptor](https://github.com/davidvanderburgh/pinball-asset-decryptor)
 by **David Vanderburgh**, extended with a Windows launcher, WSL 2 setup, VPX
 table integration, cabinet display management, and expression lighting support.
-All credit to David Vanderburgh for the underlying decryption and SPIKE 2
+All credit to David Vanderburgh for the underlying SPIKE 2
 emulation foundation.
 
 No Stern or game code is shipped in this repo.
@@ -82,15 +82,20 @@ by default and prompts you to choose the executable if it cannot find it.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
 The Windows installer's **SPIKE 2 storage** page lets you choose separate
-drive letters and folders for a new WSL emulator runtime and for first-load
-SD-card copies. Use an empty folder for a new runtime. A custom cache goes
-in a `SPIKE2-VPX-cardcache` subfolder on a Windows drive that WSL can access.
-Leave both fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime` and the
-WSL cache. The default WSL cache generally offers faster reads than a
-Windows folder. An already registered app runtime stays in place when you
-rerun the installer. Installer choices affect future cache writes. Setup
-remembers the previous Windows cache folder when you choose a new one. Runtime
-downloads and ZIP imports use the app's data folder.
+folders for a new WSL emulator runtime and for the SD-card cache. Use an empty
+folder for a new runtime. An already registered runtime stays in place when
+you rerun the installer.
+
+A custom cache stores first-load SD-card copies under
+`SPIKE2-VPX-cardcache` and compact ZIP imports under
+`SPIKE2-VPX-cardcache\imports`. The selected drive must be accessible to WSL
+for playback. A new selection applies to future cache writes. Setup
+remembers previous Windows cache folders for uninstall.
+
+Leave the storage fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime`
+for a new runtime and WSL storage for card imports and first-load copies.
+Windows settings, app logs, and the runtime download archive are stored
+under `%LOCALAPPDATA%\Spike2Vpx`.
 
 Setup verifies that WSL can execute an ARM program inside a chroot. It
 repairs a missing ARM handler in the app's distro, and the launcher checks
@@ -122,6 +127,10 @@ stores the image inside the local WSL runtime. The game starts from that
 image even when the share is disconnected. With caching disabled, ZIP import extracts a
 RAW into the app's Windows data folder. Importing the same unchanged ZIP from
 the same location reuses its verified local image while that copy is available.
+When a newer compact import matches a single saved game, it upgrades that
+pairing and removes the older app-managed image if it is unused. Separately
+saved versions can coexist. Any exported launch script that points to a
+retired image needs to be exported again.
 You can also select a folder of raw
 images to add multiple local cards.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an

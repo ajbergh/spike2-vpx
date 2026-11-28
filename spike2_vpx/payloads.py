@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sys
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple

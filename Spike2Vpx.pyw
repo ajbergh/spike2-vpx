@@ -1411,18 +1411,16 @@ class PlayerWindow:
         def work():
             image, note = self.player.prepare_image(path, expected, progress=self.report_activity)
             self.report_activity("Saving the game to the library…")
-            if expected and expected in self.saved:
-                image = self.player.relink_image(expected, image)
-            elif not any(game.title == image.title and game.image == image.image for game in self.saved):
-                self.player.save(image)
-            return image, note
+            image, removed_version = self.player.install_image(image, expected)
+            return image, note, removed_version
 
         def done(result):
-            image, self.cache_note = result
-            saved = next((row for row in self.player.library() if row.title == image.title and
-                          Path(row.image) == Path(image.image)), None)
-            self.reload_library(saved or image)
-            self.summary.configure(text=f"{image.name} · image verified.")
+            image, self.cache_note, removed_version = result
+            self.reload_library(image)
+            summary = f"{image.name} · image verified."
+            if removed_version:
+                summary += f" Removed the older {removed_version} import."
+            self.summary.configure(text=summary)
 
         message = "Opening the ZIP archive…" if Path(path).suffix.casefold() == ".zip" else (
             "Inspecting the SD-card image…")

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import subprocess
@@ -70,6 +70,15 @@ def artwork_paths(game):
 def image_version(name):
     match = re.search(r"(?<![0-9])v?([0-9]{1,2})[._]([0-9]{1,2})[._]([0-9]{1,3})(?![0-9])", name)
     return ".".join(match.groups()) if match else ""
+
+
+def is_newer_image(image, previous):
+    if image.title != previous.title or Path(image.image) == Path(previous.image):
+        return False
+    versions = [re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", game.image_version)
+                for game in (image, previous)]
+    return all(versions) and tuple(map(int, image.image_version.split("."))) > tuple(
+        map(int, previous.image_version.split(".")))
 
 
 def game_from_row(row):
@@ -168,6 +177,70 @@ class Player:
         self.setup.settings["games"] = [asdict(game), *(asdict(row) for row in games)]
         self.setup.save()
         return game
+
+    def managed_card(self, game):
+        """Recognize compact imports in the app's Windows or WSL import directories."""
+        path = Path(game.image)
+        if not re.fullmatch(re.escape(game.title[:200]) + r"-[0-9a-f]{32}\.raw", path.name):
+            return None
+        windows = PureWindowsPath(game.image)
+        wsl = (windows.drive.casefold() in (rf"\\wsl.localhost\{DISTRO}".casefold(), rf"\\wsl$\{DISTRO}".casefold())
+               and len(windows.parts) == 8
+               and windows.parts[1] == "home"
+               and windows.parts[3:-1] == (".local", "share", "spike2-vpx", "images"))
+        try:
+            if wsl:
+                folder = path.parent
+            else:
+                cache = next((root for root in storage.cache_folders(APP) if path.parent == root / "imports"), None)
+                if cache is None:
+                    return None
+                folder = cache.resolve(strict=True) / "imports"
+            if not path.is_symlink() and path.is_file() and path.resolve(strict=True) == folder / path.name:
+                return path
+        except OSError:
+            pass
+        return None
+
+    def install_image(self, image, previous=None):
+        """Save an image, then retire a superseded compact import if it is no longer used."""
+        library = self.library()
+        managed = self.managed_card(image)
+        matches = [game for game in library if game.title == image.title]
+        if previous not in library:
+            previous = None
+        if previous is None and managed and len(matches) == 1:
+            old = matches[0]
+            if is_newer_image(image, old) and self.managed_card(old):
+                previous = old
+        if previous is None:
+            saved = next((row for row in matches if Path(row.image) == Path(image.image)), None)
+            if saved is None:
+                self.save(image)
+            return saved or image, ""
+
+        saved = self.relink_image(previous, image)
+        removed_version = ""
+        if is_newer_image(image, previous) and self.retire_card(previous):
+            removed_version = previous.image_version
+        return saved, removed_version
+
+    def retire_card(self, game):
+        try:
+            old = self.managed_card(game)
+            if old is None:
+                return False
+            resolved = old.resolve()
+            if any(Path(row.image).resolve() == resolved for row in self.library()):
+                return False
+            if any(sessions.records(self.setup, game.title)):
+                return False
+            old.unlink()
+        except (OSError, RuntimeError):
+            self.setup.log.warning("Could not remove superseded card image %s", game.image, exc_info=True)
+            return False
+        self.setup.log.info("Removed superseded %s %s import at %s", game.title, game.image_version, old)
+        return True
 
     def inspect_image(self, path):
         image = file_of_type(path, ".raw")
