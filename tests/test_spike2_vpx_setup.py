@@ -255,13 +255,22 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertTrue(reopened.owns_runtime(selected))
             self.assertFalse(reopened.owns_runtime(self.app.data / "runtime"))
 
-    def test_vpx_does_not_read_the_inherited_kit_and_saves_browse_selection(self):
-        with patch.object(setup.vpxsetup, "find_vpx", return_value="") as find:
-            self.assertEqual(self.app.check_vpx().state, "Missing")
-        find.assert_called_once_with(use_kit=False)
+    def test_vpx_checks_the_default_folder_and_prefers_a_saved_selection(self):
+        default = self.app.data / "VisualPinbal" / "VPinballX64.exe"
         path = self.app.data / "VPinballX64.exe"
-        path.touch()
-        self.app.choose_vpx(path)
+        with patch.object(setup, "VPX_DEFAULT_EXE", default), \
+                patch.object(setup.vpxsetup, "vpx_version", return_value=(10, 8, 0)):
+            self.assertEqual(self.app.check_vpx().state, "Missing")
+            default.parent.mkdir()
+            default.touch()
+            self.assertEqual(self.app.vpx_executable(), default)
+            self.assertEqual(self.app.check_vpx().state, "Ready")
+            path.touch()
+            self.app.choose_vpx(path)
+            self.assertEqual(self.app.vpx_executable(), path.resolve())
+            path.unlink()
+            self.assertEqual(self.app.vpx_executable(), default)
+            path.touch()
         with patch.object(setup.vpxsetup, "vpx_version", side_effect=[(10, 7, 4), (10, 8, 0)]):
             self.assertEqual(self.app.check_vpx().state, "Needs attention")
             self.assertEqual(self.app.check_vpx().state, "Ready")

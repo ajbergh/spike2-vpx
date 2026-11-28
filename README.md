@@ -76,8 +76,9 @@ nested virtualization enabled on its host.
 [Microsoft's guide to enabling virtualization](https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows)
 
 The checklist also covers WSLg display and audio, Visual Pinball X 10.8+ x64,
-and the controller. **Get VPX** opens the VPX download page. After installing
-VPX, use **Choose VPX** if the app needs help locating `VPinballX64.exe`.
+and the controller. The app checks `C:\vPinball\VisualPinbal\VPinballX64.exe`
+by default and prompts you to choose the executable if it cannot find it.
+**Get VPX** opens the VPX download page.
 Settings and setup logs are under `%LOCALAPPDATA%\Spike2Vpx`.
 
 The Windows installer's **SPIKE 2 storage** page lets you choose separate
@@ -228,6 +229,12 @@ For a DMD cutout, choose **Borderless region** and select the DMD monitor.
 Enter the width and height in pixels and the X and Y offsets from the top-left
 of that monitor. For a centered 1024 × 576 cutout on a 1024 × 768 display, set
 X to 0 and Y to 96. **Test layout** previews the region before you save it.
+
+If B2S already has your DMD coordinates, choose **Import ScreenRes…** in
+**Cabinet** and open `ScreenRes.txt` or a table's `.res` file. The import
+uses the file's backglass placement to find the DMD monitor and fill the
+Stern LCD region. Review it with **Test layout**, then select
+**Save display layout**.
 
 When the cabinet and Windows display numbers differ, Cabinet shows both.
 The single-screen preset uses VPX and B2S defaults and a windowed Stern LCD.

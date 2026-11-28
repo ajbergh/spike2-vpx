@@ -61,6 +61,55 @@ def lcd_bounds(lcd, rect):
     return {**lcd, "x": lcd["x"] + rx, "y": lcd["y"] + ry, "w": width, "h": height}
 
 
+def screenres_backglass(selector, monitors):
+    ordered = sorted(monitors, key=lambda screen: screen["x"])
+    try:
+        if selector.startswith("="):
+            index = int(selector[1:])
+            left = ordered[index - 1]["x"] if 1 <= index <= len(ordered) else None
+            matches = [screen for screen in ordered if screen["x"] == left]
+        elif selector.startswith("@"):
+            left = int(selector[1:])
+            matches = [screen for screen in ordered if screen["x"] == left]
+        else:
+            number = int(selector.upper().removeprefix(r"\\.\DISPLAY"))
+            matches = [screen for screen in ordered if screen.get("display_number") == number]
+    except ValueError:
+        matches = []
+    if len(matches) != 1:
+        raise ValueError("The ScreenRes backglass screen is missing or ambiguous. "
+                         "Use its Windows display number in the file.")
+    return matches[0]
+
+
+def import_screenres(path, monitors):
+    values = padcabinet.parse_screenres(Path(path).read_text(encoding="utf-8-sig", errors="replace"))
+    if len(values) < 12:
+        raise ValueError("Choose a ScreenRes file with DMD width, height and offsets.")
+    backglass = screenres_backglass(values[4], monitors)
+
+    def pixels(value, extent):
+        return round(float(value[:-1]) * extent / 100) if value.endswith("%") else int(value)
+
+    bw, bh = backglass["w"], backglass["h"]
+    try:
+        bx, by, width, height, dx, dy = (pixels(value, extent)
+                                         for value, extent in zip(values[5:11], (bw, bh) * 3))
+    except (ValueError, OverflowError):
+        raise ValueError("The ScreenRes backglass offsets or DMD coordinates are invalid.") from None
+    if width <= 0 or height <= 0:
+        raise ValueError("The ScreenRes file has no explicit DMD size. Set its size or enter the LCD region manually.")
+
+    # B2S places the DMD relative to the configured backglass window.
+    x, y = backglass["x"] + bx + dx, backglass["y"] + by + dy
+    screen = next((m for m in monitors if m["x"] <= x <= m["x"] + m["w"] - width
+                   and m["y"] <= y <= m["y"] + m["h"] - height), None)
+    if screen is None:
+        raise ValueError("The ScreenRes DMD rectangle does not fit inside any connected screen.")
+    rect = lcd_rectangle({"rx": x - screen["x"], "ry": y - screen["y"], "w": width, "h": height})
+    return {"lcd": screen_key(screen), LCD_RECT: rect}
+
+
 def resolve(layout, monitors):
     screens = {screen_key(monitor): monitor for monitor in monitors}
     roles = {}

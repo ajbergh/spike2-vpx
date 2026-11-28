@@ -22,6 +22,7 @@ import vpxsetup  # noqa: E402
 
 DISTRO = "SPIKE2-VPX"
 REINSTALL_RUNTIME = "reinstall_runtime"
+VPX_DEFAULT_EXE = Path(r"C:\vPinball\VisualPinbal") / "VPinballX64.exe"
 VPX_RELEASE = "https://github.com/vpinball/vpinball/releases/tag/v10.8.0-2051-28dd6c3"
 VIRTUALIZATION_HELP = "https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows"
 VIRTUALIZATION_GUIDANCE = (
@@ -298,14 +299,17 @@ class Setup:
 
     def vpx_executable(self):
         saved = self.settings.get("vpx_exe")
-        folder = Path(saved).parent if isinstance(saved, str) and saved else vpxsetup.find_vpx(use_kit=False)
-        return Path(folder) / "VPinballX64.exe" if folder else None
+        if isinstance(saved, str) and saved:
+            exe = Path(saved)
+            if exe.is_file():
+                return exe
+        return VPX_DEFAULT_EXE if VPX_DEFAULT_EXE.is_file() else None
 
     def check_vpx(self):
         exe = self.vpx_executable()
         if exe is None or not exe.is_file():
-            return Check("Missing", "Install Visual Pinball X 10.8 or newer (Windows x64), "
-                         "then select VPinballX64.exe.")
+            return Check("Missing", "Choose VPinballX64.exe from your Visual Pinball X installation. "
+                         "If needed, install version 10.8 or newer (Windows x64) first.")
         folder = exe.parent
         version = vpxsetup.vpx_version(folder)
         if version is None:

@@ -437,6 +437,30 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
         player.preflight(game)
 
 
+@pytest.mark.parametrize("selector", ["4", "=3", "@1920", r"\\.\DISPLAY4"])
+def test_import_screenres_uses_backglass_origin_and_offsets(tmp_path, selector):
+    from spike2_vpx import cabinet
+
+    screens = [
+        {"n": 1, "x": 0, "y": 0, "w": 1920, "h": 1080, "primary": True, "display_number": 1},
+        {"n": 2, "x": -1024, "y": -150, "w": 1024, "h": 768, "device": "dmd"},
+        {"n": 3, "x": 1920, "y": -100, "w": 1920, "h": 1080, "display_number": 4},
+    ]
+    path = tmp_path / "ScreenRes.txt"
+    text = (f"# V2\n1920\n1080\n1920\n1080\n{selector}\n1.25%\n10\n"
+            "# DMD width, height, X, Y, flip\n1024\n53.3333%\n-2968\n36\n0\n0\n0\n")
+    path.write_text(text, encoding="utf-8-sig")
+    assert cabinet.import_screenres(path, screens) == {
+        "lcd": "dmd", "lcd_rect": {"rx": 0, "ry": 96, "w": 1024, "h": 576},
+    }
+    path.write_text(text.replace("-2968", "-2969"), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not fit"):
+        cabinet.import_screenres(path, screens)
+    path.write_text(text.replace("53.3333%", "0"), encoding="utf-8")
+    with pytest.raises(ValueError, match="no explicit DMD size"):
+        cabinet.import_screenres(path, screens)
+
+
 @pytest.mark.parametrize("custom", [False, True])
 def test_play_places_the_lcd_on_a_spare_display(player, tmp_path, monkeypatch, custom):
     from spike2_vpx import cabinet

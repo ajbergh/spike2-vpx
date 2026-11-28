@@ -133,6 +133,7 @@ class PlayerWindow:
         self.game = None
         self.cache_note = ""
         self.first_check = True
+        self.vpx_prompted = False
         self.cabinet_mode = False
         self.recover_game = None
         self.launch_error_game = None
@@ -524,6 +525,7 @@ class PlayerWindow:
         for label, action in (("Refresh screens", self.refresh_screens),
                               ("Identify screens", self.identify_screens),
                               ("Single-screen preset", self.single_screen),
+                              ("Import ScreenRes…", self.import_screenres),
                               ("Test layout", self.test_layout)):
             ttk.Button(buttons, text=label, command=action).pack(side="left", padx=(0, 8))
         self.save_cabinet = ttk.Button(page, text="Save display layout", command=self.save_layout)
@@ -644,6 +646,21 @@ class PlayerWindow:
 
     def single_screen(self):
         self.set_screen_choices({"lcd": cabinet.WINDOWED_LCD})
+
+    def import_screenres(self):
+        path = filedialog.askopenfilename(parent=self.root, title="Choose a ScreenRes file",
+                                          filetypes=[("ScreenRes files", ("*.txt", "*.res")),
+                                                     ("All files", "*")])
+        if not path:
+            return
+        screens = padisplay.monitors()
+        try:
+            imported = cabinet.import_screenres(path, screens)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Import ScreenRes", str(exc), parent=self.root)
+            return
+        self.screens = screens
+        self.set_screen_choices({**self.selected_layout(), **imported})
 
     def identify_screens(self):
         self.refresh_screens()
@@ -1216,7 +1233,7 @@ class PlayerWindow:
         else:
             self.start(self.setup.checks, self.show_checks, "Checking this PC…")
 
-    def show_checks(self, checks):
+    def show_checks(self, checks, *, prompt_vpx=True):
         self.checks = checks
         for key, check in checks.items():
             status, detail, fix = self.labels[key]
@@ -1245,6 +1262,14 @@ class PlayerWindow:
         self.summary.configure(text=summary)
         self.primary.configure(text="Retry setup" if "Setup failed" in states else
                                "Repair" if "Repair needed" in states else "Set up")
+        if prompt_vpx and not self.vpx_prompted and checks["vpx"].state == "Missing":
+            self.root.after_idle(self.prompt_for_vpx)
+
+    def prompt_for_vpx(self):
+        if self.vpx_prompted or self.busy or self.checks["vpx"].state != "Missing":
+            return
+        if all(check.state != "Restart required" for check in self.checks.values()):
+            self.choose_vpx()
 
     @staticmethod
     def next_step(checks):
@@ -1270,11 +1295,12 @@ class PlayerWindow:
                    "Setting up this PC… Windows may ask for administrator permission.")
 
     def setup_finished(self, checks):
-        self.show_checks(checks)
+        self.show_checks(checks, prompt_vpx=False)
         runtime = checks["runtime"]
         if (runtime.state == "Repair needed" and runtime.action in RUNTIME_CONFIRMATIONS
                 and all(check.state != "Restart required" for check in checks.values())):
             self.fix_setup_item("runtime")
+        self.prompt_for_vpx()
 
     def fix_setup_item(self, key):
         check = self.checks[key]
@@ -1305,6 +1331,7 @@ class PlayerWindow:
                        self.show_checks, f"Setting up {ROWS[key]}…")
 
     def choose_vpx(self):
+        self.vpx_prompted = True
         exe = filedialog.askopenfilename(parent=self.root, title="Choose Visual Pinball X",
                                          filetypes=[("Visual Pinball X", "VPinballX64.exe"),
                                                     ("Executables", "*.exe")])
