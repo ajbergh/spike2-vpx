@@ -42,6 +42,8 @@ def test_uninstall_cleans_local_data_and_dedicated_cache_only(tmp_path):
     downloads.mkdir(parents=True)
     (downloads / "runtime.tar.gz").touch()
     (data / "setup.json").touch()
+    (data / "vpx.json").write_text('{"card_cache": false}', encoding="utf-8")
+    (data / "vpx.json.tmp").touch()
     backup = data / "my-library-backup.json"
     backup.touch()
     cache = tmp_path / "Cards" / "SPIKE2-VPX-cardcache"
@@ -51,8 +53,8 @@ def test_uninstall_cleans_local_data_and_dedicated_cache_only(tmp_path):
     original = cache.parent / "game.zip"
     original.touch()
 
-    uninstall.remove_player_files(data, cache)
-    uninstall.remove_player_files(data, cache)
+    uninstall.remove_player_files(data, [cache])
+    uninstall.remove_player_files(data, [cache])
 
     assert list(data.iterdir()) == [backup]
     assert list(cache.parent.iterdir()) == [original]

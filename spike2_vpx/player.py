@@ -184,14 +184,27 @@ class Player:
 
     def import_archive(self, path, expected=None, *, progress=None):
         source = file_of_type(path, ".zip")
+        key = os.path.normcase(str(source))
+        imports = self.setup.settings.get("zip_imports")
+        if not isinstance(imports, dict):
+            imports = {}
         try:
-            with ZipFile(source) as archive:
+            with source.open("rb") as file, ZipFile(file) as archive:
                 images = [member for member in archive.infolist()
                           if not member.is_dir() and Path(member.filename).suffix.casefold() == ".raw"
                           and not member.filename.startswith("__MACOSX/")]
                 if len(images) != 1 or images[0].file_size == 0:
                     raise ValueError("Import a ZIP containing one non-empty .raw image, or extract the image yourself.")
                 member = images[0]
+                info = os.fstat(file.fileno())
+                signature = [info.st_size, info.st_mtime_ns, info.st_ino,
+                             member.filename, member.file_size, member.CRC]
+                cached = imports.get(key)
+                if isinstance(cached, dict) and cached.get("signature") == signature:
+                    game = game_from_row(cached.get("game"))
+                    if game and Path(game.image).is_file():
+                        self.check_image_title(game, expected)
+                        return game
                 with archive.open(member) as data:
                     if padlaunch.cache_on():
                         game = self.import_local_card(data, member.file_size, expected, progress=progress)
@@ -199,8 +212,11 @@ class Player:
                         game = self.extract_card(data, member.file_size, expected, progress=progress)
         except (BadZipFile, RuntimeError, NotImplementedError) as exc:
             raise ValueError(f"Unable to extract this ZIP. Download it again or extract the .raw manually. {exc}") from exc
-        return replace(game, image_version=image_version(Path(member.filename).name)
-                       or image_version(source.name))
+        game = replace(game, image_version=image_version(Path(member.filename).name) or image_version(source.name))
+        imports[key] = {"signature": signature, "game": asdict(game)}
+        self.setup.settings["zip_imports"] = imports
+        self.setup.save()
+        return game
 
     @staticmethod
     def copy_card(data, out, size, message, progress, *, sparse=False):
@@ -315,7 +331,7 @@ class Player:
 
     def prepare_image(self, path, expected=None, *, progress=None):
         if Path(path).suffix.casefold() == ".zip":
-            return self.import_archive(path, expected, progress=progress), "Imported and verified the local image."
+            return self.import_archive(path, expected, progress=progress), "The verified local image is ready."
         game = self.inspect_image(path)
         self.check_image_title(game, expected)
         if not padlaunch.cache_on():

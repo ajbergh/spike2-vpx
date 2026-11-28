@@ -300,6 +300,38 @@ def test_zip_import_rejects_ambiguous_images_and_cleans_failed_verification(play
     assert not list((tmp_path / "images").iterdir())
 
 
+def test_reimport_reuses_verified_image_and_reimports_if_missing_or_changed(player, tmp_path, monkeypatch):
+    from spike2_vpx import player as module
+
+    source = tmp_path / "Stern image.zip"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("godzilla_1_12_0.raw", b"first version")
+    monkeypatch.setattr(module.padlaunch, "cache_on", lambda: False)
+    identify = Mock(side_effect=lambda path: Game("godzilla_le", str(path)))
+    monkeypatch.setattr(player, "inspect_image", identify)
+    first, _ = player.prepare_image(source)
+    player.save(first)
+
+    # A fresh player uses the saved import record without extracting or inspecting again.
+    player.setup.settings = json.loads(player.setup.settings_path.read_text(encoding="utf-8"))
+    second, _ = player.prepare_image(source)
+    player.save(second)
+    assert second == first
+    assert player.library() == [first]
+    assert list((tmp_path / "images").iterdir()) == [Path(first.image)]
+    identify.assert_called_once()
+
+    Path(first.image).unlink()
+    recovered, _ = player.prepare_image(source)
+    assert Path(recovered.image).read_bytes() == b"first version"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("godzilla_1_13_0.raw", b"new version")
+    updated, _ = player.prepare_image(source)
+    assert updated.image_version == "1.13.0"
+    assert Path(updated.image).read_bytes() == b"new version"
+    assert identify.call_count == 3
+
+
 def test_zip_import_passes_only_the_member_to_the_local_runtime(player, tmp_path, monkeypatch):
     from spike2_vpx import player as module
 

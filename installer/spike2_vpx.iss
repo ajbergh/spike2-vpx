@@ -39,6 +39,7 @@ Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"" --set
 
 [UninstallDelete]
 Type: files; Name: "{app}\storage.ini"
+Type: files; Name: "{app}\cache-locations.txt"
 
 [Code]
 var
@@ -142,17 +143,51 @@ begin
   SetPreviousData(PreviousDataKey, 'CacheFolder', StoragePage.Values[1]);
 end;
 
+procedure RememberPreviousCache(const Config: String);
+var
+  Lines, History: TArrayOfString;
+  Index, HistoryIndex: Integer;
+  Folder, RecordPath: String;
+begin
+  if not FileExists(Config) then
+    Exit;
+  if not LoadStringsFromFile(Config, Lines) then
+    RaiseException('Could not read the previous SPIKE 2 storage locations.');
+  for Index := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    if Pos('cache = ', Lines[Index]) <> 1 then
+      Continue;
+    Folder := Trim(Copy(Lines[Index], 9, Length(Lines[Index])));
+    if (Folder = '') or (CompareText(Folder, StoragePage.Values[1]) = 0) then
+      Exit;
+    RecordPath := ExpandConstant('{app}\cache-locations.txt');
+    if FileExists(RecordPath) and not LoadStringsFromFile(RecordPath, History) then
+      RaiseException('Could not read the previous SPIKE 2 cache locations.');
+    for HistoryIndex := 0 to GetArrayLength(History) - 1 do
+      if CompareText(History[HistoryIndex], Folder) = 0 then
+        Exit;
+    SetArrayLength(Lines, 1);
+    Lines[0] := Folder;
+    if not SaveStringsToUTF8File(RecordPath, Lines, True) then
+      RaiseException('Could not save the previous SPIKE 2 cache location.');
+    Exit;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Lines: TArrayOfString;
+  Config: String;
 begin
   if CurStep = ssPostInstall then
   begin
+    Config := ExpandConstant('{app}\storage.ini');
+    RememberPreviousCache(Config);
     SetArrayLength(Lines, 3);
     Lines[0] := '[Storage]';
     Lines[1] := 'runtime = ' + StoragePage.Values[0];
     Lines[2] := 'cache = ' + StoragePage.Values[1];
-    if not SaveStringsToUTF8File(ExpandConstant('{app}\storage.ini'), Lines, False) then
+    if not SaveStringsToUTF8File(Config, Lines, False) then
       RaiseException('Could not save SPIKE 2 storage locations.');
   end;
 end;

@@ -87,7 +87,8 @@ in a `SPIKE2-VPX-cardcache` subfolder on a Windows drive that WSL can access.
 Leave both fields blank to use `%LOCALAPPDATA%\Spike2Vpx\runtime` and the
 WSL cache. The default WSL cache generally offers faster reads than a
 Windows folder. An already registered app runtime stays in place when you
-rerun the installer. Installer choices affect future cache writes. Runtime
+rerun the installer. Installer choices affect future cache writes. Setup
+remembers the previous Windows cache folder when you choose a new one. Runtime
 downloads and ZIP imports use the app's data folder.
 
 Setup verifies that WSL can execute an ARM program inside a chroot. It
@@ -118,7 +119,9 @@ as `foo_fighters_pro-<id>.raw`. It goes in `SPIKE2-VPX-cardcache\imports` under
 the cache folder selected in the installer. When that folder is blank, the app
 stores the image inside the local WSL runtime. The game starts from that
 image even when the share is disconnected. With caching disabled, ZIP import extracts a
-RAW into the app's Windows data folder. You can also select a folder of raw
+RAW into the app's Windows data folder. Importing the same unchanged ZIP from
+the same location reuses its verified local image while that copy is available.
+You can also select a folder of raw
 images to add multiple local cards.
 Choose a compatible VPX table to make a playable `(PAD).vpx` copy, or use an
 existing prepared table. The app saves new conversions and their companion
@@ -305,8 +308,8 @@ Uninstall from Windows **Installed apps** under the same Windows account that
 set up the emulator. Uninstall closes the bundled SPIKE 2 VPX processes and
 removes the private `SPIKE2-VPX` WSL runtime, the controller registration,
 and the app's local settings, logs, runtime download, and cached card copies.
-This includes the current `SPIKE2-VPX-cardcache` subfolder if one was selected
-in setup. High scores and machine settings inside the runtime are deleted.
+This includes the `SPIKE2-VPX-cardcache` subfolders for current and previously
+recorded cache locations. High scores and machine settings inside the runtime are deleted.
 Keep any generated image you want to retain outside the app's cache before
 uninstalling. Original SD-card downloads, external images, VPX tables, and
 other WSL distributions are kept. WSL itself is shared and stays installed.

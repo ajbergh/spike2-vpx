@@ -74,10 +74,11 @@ jobs:
           $installer = (Get-Item -LiteralPath 'installer/Output/SPIKE2-VPX-Setup.exe').FullName
           $target = Join-Path $env:RUNNER_TEMP 'SPIKE2 VPX installer smoke test'
           $log = Join-Path $env:RUNNER_TEMP 'SPIKE2-VPX-install.log'
-          $setup = Start-Process -FilePath $installer -ArgumentList @(
+          $setupArgs = @(
               '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
               "/DIR=`"$target`"", "/LOG=`"$log`""
-          ) -Wait -PassThru -WindowStyle Hidden
+          )
+          $setup = Start-Process -FilePath $installer -ArgumentList $setupArgs -Wait -PassThru -WindowStyle Hidden
           if ($setup.ExitCode -ne 0) {
               if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 60 }
               throw "Setup exited with code $($setup.ExitCode)."
@@ -90,13 +91,29 @@ jobs:
               Pop-Location
           }
 
+          $storage = Join-Path $target 'storage.ini'
+          $previousCache = Join-Path $env:RUNNER_TEMP 'SPIKE 2 VPX café cache'
+          $previousImport = Join-Path $previousCache 'SPIKE2-VPX-cardcache\imports'
+          New-Item -ItemType Directory -Path $previousImport -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $previousImport 'old.raw') -Value 'old cache fixture'
+          Set-Content -LiteralPath $storage -Encoding utf8BOM -Value @('[Storage]', "cache = $previousCache")
+          $upgrade = Start-Process -FilePath $installer -ArgumentList $setupArgs -Wait -PassThru -WindowStyle Hidden
+          if ($upgrade.ExitCode -ne 0 -or (Get-Content -LiteralPath (Join-Path $target 'cache-locations.txt')) -ne $previousCache) {
+              Get-Content -LiteralPath $log -Tail 60
+              throw 'Setup failed to remember the previous cache folder.'
+          }
+
           $cache = Join-Path $env:RUNNER_TEMP 'SPIKE 2 VPX smoke cache parent'
           $cached = Join-Path $cache 'SPIKE2-VPX-cardcache\imports'
           $source = Join-Path $cache 'original.zip'
           New-Item -ItemType Directory -Path $cached -Force | Out-Null
           Set-Content -LiteralPath (Join-Path $cached 'game.raw') -Value 'cache fixture'
           Set-Content -LiteralPath $source -Value 'source fixture'
-          Set-Content -LiteralPath (Join-Path $target 'storage.ini') -Value @('[Storage]', "cache = $cache")
+          Set-Content -LiteralPath $storage -Value @('[Storage]', "cache = $cache")
+          $data = Join-Path $env:LOCALAPPDATA 'Spike2Vpx'
+          New-Item -ItemType Directory -Path $data -Force | Out-Null
+          $preferences = Join-Path $data 'vpx.json'
+          Set-Content -LiteralPath $preferences -Value '{"card_cache": false}'
           $uninstallLog = Join-Path $env:RUNNER_TEMP 'SPIKE2-VPX-uninstall.log'
           $player = Start-Process -FilePath (Join-Path $target 'python\python.exe') -ArgumentList '-B -c "import time; time.sleep(180)"' -PassThru -WindowStyle Hidden
           try {
@@ -105,7 +122,8 @@ jobs:
               ) -Wait -PassThru -WindowStyle Hidden
               $player.Refresh()
               if ($removed.ExitCode -ne 0 -or !$player.HasExited -or (Test-Path -LiteralPath (Join-Path $target 'python\python.exe')) -or
-                  (Test-Path -LiteralPath $cached) -or !(Test-Path -LiteralPath $source)) {
+                  (Test-Path -LiteralPath $cached) -or (Test-Path -LiteralPath $previousImport) -or
+                  (Test-Path -LiteralPath $preferences) -or !(Test-Path -LiteralPath $source)) {
                   Get-Content -LiteralPath $uninstallLog -Tail 60
                   throw 'Uninstall failed to stop the bundled process or clean up the installed files and cache.'
               }

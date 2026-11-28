@@ -74,8 +74,8 @@ def remove_owned_tree(path):
     shutil.rmtree(path)
 
 
-def remove_player_files(data, cache):
-    if cache is not None:
+def remove_player_files(data, caches):
+    for cache in caches:
         remove_owned_tree(cache)
     for name in ("downloads", "images", "lighting-scans", "logs", "rig-board"):
         remove_owned_tree(data / name)
@@ -83,7 +83,7 @@ def remove_player_files(data, cache):
     if data.is_dir():
         if data.resolve() != data:
             raise RuntimeError(f"Uninstall cannot safely clean the redirected folder {data}.")
-        for name in ("audio.json", "setup.json", "setup.lock"):
+        for name in ("audio.json", "setup.json", "setup.lock", "vpx.json", "vpx.json.tmp"):
             (data / name).unlink(missing_ok=True)
         if next(data.iterdir(), None) is None:
             data.rmdir()
@@ -111,7 +111,7 @@ def uninstall():
     setup = Setup(Path(local) / "Spike2Vpx", log_to_file=False)
     remove_runtime(setup)
     standalone_controller.change("unregister")
-    remove_player_files(setup.data, storage.cache_folder(APP))
+    remove_player_files(setup.data, storage.cache_folders(APP))
     remove_bytecode()
 
 
