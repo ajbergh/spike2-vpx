@@ -54,10 +54,18 @@ checkout with x64 Python and Tcl/Tk. For a checkout, install the bundled
 Python dependencies with `python -m pip install -r requirements-windows.txt`.
 
 **WSL 2 (Windows Subsystem for Linux) and hardware virtualization are required.**
-In the app, select **Set up** and approve the Windows administrator prompt.
-Setup enables Virtual Machine Platform, installs or updates WSL as needed, and
-imports the app's private `SPIKE2-VPX` distribution. If Windows requests a
-restart, restart and reopen the app to continue setup.
+When the installer opens the app, setup starts automatically. Approve the
+Windows administrator prompts so setup can enable Virtual Machine Platform,
+install or update WSL, and register the controller as needed. Setup also imports
+the app's private `SPIKE2-VPX` distribution when needed. If Windows requests a
+restart, restart and reopen the app to continue setup. You can also run setup
+from the app's **Setup** tab.
+
+If WSL still has the `SPIKE2-VPX` registration but its `ext4.vhdx` disk is
+missing, setup offers **Reinstall runtime**. Restore the disk first if you have
+a backup. Reinstalling requires your approval and replaces the WSL distribution
+and any data inside it, including its internal cache. Your Windows SD-card
+images and Windows cache folder are kept.
 
 If setup reports a virtualization problem, open **Task Manager → Performance →
 CPU** and check **Virtualization**. If disabled, consult your PC manufacturer's

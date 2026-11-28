@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import queue
+import sys
 import threading
 from time import monotonic
 import tkinter as tk
@@ -14,7 +15,7 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 
 from spike2_vpx.player import STERN_IMAGES, Player, artwork_paths, folder_images, image_version, supported_tables
-from spike2_vpx_setup import ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
+from spike2_vpx_setup import REINSTALL_RUNTIME, ROWS, VIRTUALIZATION_HELP, VPX_RELEASE, Setup
 from spike2_vpx import backglass, cabinet, lighting, sessions, support
 import padisplay
 import padlaunch
@@ -25,6 +26,7 @@ LAUNCH_STAGES = ("Checking files", "Starting Stern", "Connecting controller", "O
 BACKGROUND, SURFACE, TEXT, MUTED, ACCENT = "#11151c", "#1b2330", "#edf2f7", "#acbbcd", "#79ddc5"
 LCD_FULLSCREEN_MODE = "Borderless fullscreen"
 LCD_WINDOWED_MODE = "Windowed"
+RUNTIME_CONFIRMATIONS = (REINSTALL_RUNTIME, "convert_runtime")
 
 
 def window_title():
@@ -116,7 +118,7 @@ def game_preview(root, game, width, height):
 
 
 class PlayerWindow:
-    def __init__(self, root, setup):
+    def __init__(self, root, setup, *, auto_setup=False):
         self.root = root
         self.setup = setup
         self.player = Player(setup)
@@ -186,7 +188,10 @@ class PlayerWindow:
         self.build_activity(status)
         self.tabs.select(self.setup_page)
         self.reload_library()
-        self.check_again()
+        if auto_setup:
+            self.repair()
+        else:
+            self.check_again()
         self.tabs.bind("<<NotebookTabChanged>>", self.tab_changed, add="+")
 
     def build_activity(self, parent):
@@ -1177,12 +1182,10 @@ class PlayerWindow:
             return
 
     def check_again(self):
-        def work():
-            resume = "restart_boot" in self.setup.settings
-            checks = self.setup.checks()
-            return self.run_setup_steps(checks) if resume else checks
-
-        self.start(work, self.show_checks, "Checking this PC…")
+        if "restart_boot" in self.setup.settings:
+            self.repair()
+        else:
+            self.start(self.setup.checks, self.show_checks, "Checking this PC…")
 
     def show_checks(self, checks):
         self.checks = checks
@@ -1190,7 +1193,10 @@ class PlayerWindow:
             status, detail, fix = self.labels[key]
             status.configure(text=check.state)
             detail.configure(text=check.detail)
-            if check.state == "Missing" and (check.action or key == "vpx"):
+            runtime_decision = check.action in RUNTIME_CONFIRMATIONS
+            fix.configure(text="Reinstall runtime" if check.action == REINSTALL_RUNTIME else
+                          "Convert runtime" if runtime_decision else "Click to fix")
+            if runtime_decision or (check.state == "Missing" and (check.action or key == "vpx")):
                 fix.grid()
             else:
                 fix.grid_remove()
@@ -1215,10 +1221,12 @@ class PlayerWindow:
     def next_step(checks):
         if any(check.state == "Restart required" for check in checks.values()):
             return None
-        for key, check in checks.items():
-            if check.state == "Setup failed" and check.action:
+        steps = {key: check for key, check in checks.items()
+                 if check.action and check.action not in RUNTIME_CONFIRMATIONS}
+        for key, check in steps.items():
+            if check.state == "Setup failed":
                 return key, check.action
-        return next(((key, check.action) for key, check in checks.items() if check.action), None)
+        return next(((key, check.action) for key, check in steps.items()), None)
 
     def run_setup_steps(self, checks):
         while (step := self.next_step(checks)):
@@ -1229,14 +1237,41 @@ class PlayerWindow:
         return checks
 
     def repair(self):
-        self.start(lambda: self.run_setup_steps(self.setup.checks()), self.show_checks,
+        self.start(lambda: self.run_setup_steps(self.setup.checks()), self.setup_finished,
                    "Setting up this PC… Windows may ask for administrator permission.")
+
+    def setup_finished(self, checks):
+        self.show_checks(checks)
+        runtime = checks["runtime"]
+        if (runtime.state == "Repair needed" and runtime.action in RUNTIME_CONFIRMATIONS
+                and all(check.state != "Restart required" for check in checks.values())):
+            self.fix_setup_item("runtime")
 
     def fix_setup_item(self, key):
         check = self.checks[key]
         if key == "vpx":
             self.choose_vpx()
+        elif check.action == REINSTALL_RUNTIME:
+            if messagebox.askyesno(
+                "Reinstall the SPIKE 2 runtime",
+                f"WSL cannot find the runtime disk at:\n{check.missing_disk}\n\n"
+                "If it was moved or you have a backup, restore it first and select Check again.\n\n"
+                "Reinstalling removes the old SPIKE2-VPX WSL distribution and any data inside it, "
+                "including its internal cache, and creates a fresh runtime in the configured folder. "
+                "Your Windows SD-card images and Windows cache folder are kept.\n\n"
+                "Reinstall the runtime?",
+                default=messagebox.NO, icon=messagebox.WARNING, parent=self.root,
+            ):
+                self.start(lambda: self.setup.repair(key, check.action, progress=self.report_activity,
+                                                     missing_disk=check.missing_disk),
+                           self.show_checks, "Reinstalling the SPIKE 2 runtime…")
         elif check.action:
+            if check.action == "convert_runtime" and not messagebox.askyesno(
+                "Convert the SPIKE 2 runtime to WSL 2",
+                "Back up the runtime data before converting. Is your backup ready?",
+                default=messagebox.NO, icon=messagebox.WARNING, parent=self.root,
+            ):
+                return
             self.start(lambda: self.setup.repair(key, check.action, progress=self.report_activity),
                        self.show_checks, f"Setting up {ROWS[key]}…")
 
@@ -1483,7 +1518,7 @@ def main():
             except OSError:
                 messagebox.showinfo("SPIKE 2 VPX", "SPIKE 2 VPX is already open.", parent=root)
                 return
-            PlayerWindow(root, setup)
+            PlayerWindow(root, setup, auto_setup="--setup" in sys.argv[1:])
             root.deiconify()
             root.mainloop()
     except OSError as exc:

@@ -31,7 +31,7 @@ Source: "{#ProjectDir}\tools\spike2_emu\*"; DestDir: "{app}\tools\spike2_emu"; F
 Name: "{group}\SPIKE 2 VPX"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\spike2_vpx.ico"
 
 [Run]
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"""; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX and check WSL 2 requirements"; Flags: postinstall nowait runasoriginaluser skipifsilent
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\Spike2Vpx.pyw"" --setup"; WorkingDir: "{app}"; Description: "Open SPIKE 2 VPX and set up its requirements"; Flags: postinstall nowait runasoriginaluser skipifsilent
 
 [UninstallRun]
 Filename: "{app}\python\python.exe"; Parameters: """{app}\tools\spike2_emu\vpx\standalone_controller.py"" unregister"; Flags: runhidden waituntilterminated; RunOnceId: "spike2-vpx-controller"

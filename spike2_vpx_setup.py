@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import stat
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile
@@ -20,6 +21,7 @@ sys.path.insert(0, str(KIT))
 import vpxsetup  # noqa: E402
 
 DISTRO = "SPIKE2-VPX"
+REINSTALL_RUNTIME = "reinstall_runtime"
 VPX_RELEASE = "https://github.com/vpinball/vpinball/releases/tag/v10.8.0-2051-28dd6c3"
 VIRTUALIZATION_HELP = "https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows"
 VIRTUALIZATION_GUIDANCE = (
@@ -42,6 +44,34 @@ class Check:
     state: str
     detail: str
     action: str = ""
+    missing_disk: Path | None = None
+
+
+def missing_runtime_mount(detail, disk):
+    detail = detail.casefold()
+    path = re.escape(" ".join(str(disk).casefold().split()))
+    return (
+        re.search(path + r"['\"’”]", detail) is not None
+        and re.search(r"\bwsl/service/createinstance/mount(?:disk|vhd)/(?:hcs/)?"
+                      r"error_(?:path|file)_not_found\b", detail) is not None
+    )
+
+
+def empty_runtime_folder(folder):
+    """Accept an empty or missing directory on a reachable drive."""
+    if not folder.is_absolute() or folder == Path(folder.anchor):
+        return False
+    try:
+        Path(folder.anchor).stat()
+        try:
+            info = folder.lstat()
+        except FileNotFoundError:
+            return True
+        return (stat.S_ISDIR(info.st_mode)
+                and not getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                and next(folder.iterdir(), None) is None)
+    except OSError:
+        return False
 
 
 def needs_virtualization(detail):
@@ -192,11 +222,21 @@ class Setup:
                          "Resolve the name conflict, then check again.")
         if version != 2:
             return Check("Repair needed", f"{DISTRO} is registered as WSL 1. "
-                         "Back up its data, then select Repair to convert it to WSL 2.",
+                         "Back up its data, then select Convert runtime to convert it to WSL 2.",
                          "convert_runtime")
         manifest = self.wsl("cat", "/etc/pad-runtime.json")
         if manifest.returncode:
-            raise RuntimeError(runtime._why(manifest))
+            detail = runtime._why(manifest)
+            disk = base / "ext4.vhdx"
+            if missing_runtime_mount(detail, disk):
+                self.log.info("Runtime disk mount failed. %s", detail)
+                if empty_runtime_folder(base):
+                    return Check("Repair needed", f"WSL cannot find the runtime disk at {disk}. "
+                                 "Restore it from backup if available, or click to reinstall the runtime.",
+                                 REINSTALL_RUNTIME, disk)
+                return Check("Needs attention", f"WSL cannot open the runtime disk at {disk}. "
+                             "Check the drive connection, folder contents, and permissions, then check again.")
+            raise RuntimeError(detail)
         image = json.loads(runtime._text(manifest.stdout))
         if (not isinstance(image, dict) or image.get("variant") != "full"
                 or image.get("runtime_version") != runtime.RUNTIME_VERSION):
@@ -313,7 +353,7 @@ class Setup:
                 self.save()
             else:
                 return Check("Setup failed", f"{failure['detail']} {check.detail} See the setup log.",
-                             check.action)
+                             check.action, check.missing_disk)
         return check
 
     def checks(self):
@@ -349,10 +389,18 @@ class Setup:
     def install_runtime(self, progress=None):
         if distro_registration() is not None:
             raise RuntimeError(f"{DISTRO} already exists. Check its status before attempting another import.")
+        target = self.runtime_install_target()
+        archive = self.runtime_archive(progress)
+        self.import_runtime(target, archive, progress)
+
+    def runtime_install_target(self):
         target = self.runtime_dir.resolve()
-        if target.exists() and (not target.is_dir() or any(target.iterdir())):
-            raise RuntimeError(f"The runtime needs an empty folder. {target} already contains data. "
-                               "Use an empty folder or run the installer again to choose another location.")
+        if not empty_runtime_folder(target):
+            raise RuntimeError(f"The runtime needs an empty folder on an available drive. Check {target} "
+                               "or run the installer again to choose another location.")
+        return target
+
+    def runtime_archive(self, progress):
         image = runtime.IMAGE
         stamp = image.sha256[:12]
         cache = self.data / "downloads" / f"{stamp}-{image.filename}"
@@ -368,16 +416,42 @@ class Setup:
                               progress=(lambda done, total: progress("Downloading the SPIKE 2 runtime…", done, total))
                               if progress else None,
                               verifying=(lambda: progress("Verifying the runtime download…")) if progress else None)
+        return cache
+
+    def import_runtime(self, target, archive, progress):
         if progress:
             progress("Installing the SPIKE 2 runtime in WSL…")
-        runtime.import_image(DISTRO, str(target), str(cache))
+        runtime.import_image(DISTRO, str(target), str(archive))
         self.settings["runtime_dir"] = str(target)
         self.save()
 
-    def repair(self, key, action, *, progress=None):
+    def reinstall_runtime(self, missing_disk, progress):
+        target = self.runtime_install_target()
+        check = self.check_runtime()
+        if check.action != REINSTALL_RUNTIME or check.missing_disk != missing_disk:
+            raise RuntimeError("The runtime status changed. Check again before reinstalling.")
+        archive = self.runtime_archive(progress)
+        if self.runtime_install_target() != target:
+            raise RuntimeError("The runtime installation folder changed. Check again before reinstalling.")
+        runtime._need_room(str(Path(target.anchor)), runtime.IMPORT_ROOM, "install the SPIKE 2 runtime")
+        if (distro_registration() != (missing_disk.parent, 2)
+                or not empty_runtime_folder(missing_disk.parent)):
+            raise RuntimeError("The runtime status changed. Check again before reinstalling.")
+        if progress:
+            progress("Removing the stale SPIKE 2 WSL registration…")
+        self.log.info("Unregistering %s with missing disk %s", DISTRO, missing_disk)
+        out = run(["wsl.exe", "--unregister", DISTRO], timeout=120)
+        if out.returncode:
+            raise RuntimeError(f"WSL could not remove the stale runtime registration. {runtime._why(out)}")
+        if distro_registration() is not None:
+            raise RuntimeError(f"{DISTRO} is still registered. Check its status before importing the runtime.")
+        self.import_runtime(target, archive, progress)
+
+    def repair(self, key, action, *, progress=None, missing_disk=None):
         steps = {"install_wsl": lambda: self.install_platform("Install"),
                  "update_wsl": lambda: self.install_platform("Update"),
                  "install_runtime": lambda: self.install_runtime(progress),
+                 REINSTALL_RUNTIME: lambda: self.reinstall_runtime(missing_disk, progress),
                  "convert_runtime": self.convert_runtime,
                  "repair_arm": self.repair_arm,
                  "register_controller": lambda: self.controller("register")}
