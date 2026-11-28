@@ -198,7 +198,8 @@ class Setup:
 
     def check_wslg(self, linux):
         out = run(["wsl.exe", "--version"])
-        match = re.search(r"(?im)^WSLg[^:\r\n]*:\s*(\d+\.\d+(?:\.\d+)*)",
+        match = re.search(r"(?im)^[^:：\r\n]*(?<![a-z0-9_])WSLg(?![a-z0-9_])"
+                          r"[^:：\r\n]*[:：][^\S\r\n]*(\d+\.\d+(?:\.\d+)*)",
                           runtime._text(out.stdout).lstrip("\ufeff"))
         if out.returncode != 0 or not match:
             return Check("Missing", "Set up updates WSL to add Linux display and audio support.", "update_wsl")

@@ -410,7 +410,7 @@ def test_cabinet_uses_device_identity_and_preflights_backglass(player, tmp_path,
     layout = {"playfield": "play", "backglass": "glass", "lcd": "lcd"}
     player.save_layout(layout, screens)
     assert kit_save.call_args.args[0]["player"] == {"monitor": 1}
-    assert "x=-1280" in (tmp_path / "rig-board" / "display.conf").read_text()
+    assert "x=0 y=720 w=1280 h=720" in (tmp_path / "rig-board" / "display.conf").read_text()
     assert "Attach a .directb2s" in player.preflight(game)[0]
     source = tmp_path / "original.directb2s"
     source.write_text("<DirectB2SData/>")
@@ -492,17 +492,17 @@ def test_play_places_the_lcd_on_a_spare_display(player, tmp_path, monkeypatch, c
             player.save_layout({**layout, cabinet.LCD_RECT: {**rect, "ry": 200}}, screens)
         player.save_layout(layout, screens, "Cabinet")
         assert player.layout(screens) == player.profiles()["Cabinet"] == layout
-        assert "x=-1024 y=-54 w=1024 h=576 fs=0" in path.read_text()
+        assert "x=0 y=96 w=1024 h=576 fs=0" in path.read_text()
         path.unlink()  # The next launch must regenerate the rectangle from the saved profile.
 
     def start(*_, lighting_report, **__):
         conf = path.read_text()
         if custom:
             assert "monitor=2 mode=region border=0 rx=0 ry=96" in conf
-            assert "x=-1024 y=-54 w=1024 h=576 fs=0" in conf
+            assert "x=0 y=96 w=1024 h=576 fs=0" in conf
         else:
             assert "monitor=2 mode=fullscreen border=0" in conf
-            assert "x=-1024 y=-150 w=1024 h=768 fs=1" in conf
+            assert "x=0 y=0 w=1024 h=768 fs=1" in conf
         lighting_report((), "Stern lighting skipped.")
         return 0
 

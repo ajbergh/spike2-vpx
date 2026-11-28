@@ -182,10 +182,9 @@ def first_rect():
     import padisplay
     import padlaunch
     try:
-        line = padisplay.resolve(padisplay.load())
-        if line:
-            kv = dict(t.split("=", 1) for t in line.split()[1:])
-            return int(kv["x"]), int(kv["y"]), int(kv["w"]), int(kv["h"])
+        placement = padisplay.place(padisplay.load(os.path.join(padlaunch.BOARD, "display.conf")))
+        if placement:
+            return placement["x"], placement["y"], placement["w"], placement["h"]
     except Exception:                                       # noqa: BLE001
         pass
     return padcontroller.lcd_rect(padlaunch.kit_load().get("lcd") or {}, padcontroller.monitors())

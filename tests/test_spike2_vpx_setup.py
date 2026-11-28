@@ -78,6 +78,13 @@ class StandaloneSetupTest(unittest.TestCase):
             self.assertEqual(self.app.check_wslg(setup.Check("Ready", "")).state, "Ready")
         self.assertIn("PULSE_SERVER", wsl.call_args.args[-1])
 
+    def test_wslg_detects_localized_version_output(self):
+        text = "Version WSL : 3.0.5.0\r\nVersion du noyau : 6.18.58.1-1\r\nVersion WSLg\xa0:\xa01.0.79\r\n"
+        with patch.object(setup, "run", return_value=result(output=text.encode("utf-16-le"))):
+            check = self.app.check_wslg(setup.Check("Missing", ""))
+        self.assertEqual(check.state, "Detected")
+        self.assertIn("WSLg 1.0.79", check.detail)
+
     def test_runtime_only_accepts_its_own_full_wsl2_distro(self):
         with patch.object(setup, "distro_registration", return_value=(Path("another"), 2)), \
                 patch.object(self.app, "wsl") as wsl:
